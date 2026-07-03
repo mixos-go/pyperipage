@@ -1,19 +1,29 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'core/theme/app_theme.dart';
+import 'providers/printer_provider.dart';
+import 'screens/home/home_screen.dart';
 
 void main() {
-  runApp(const MainApp());
+  runApp(const PeriPageApp());
 }
 
-class MainApp extends StatelessWidget {
-  const MainApp({super.key});
+class PeriPageApp extends StatelessWidget {
+  const PeriPageApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Text('Hello World!'),
-        ),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => PrinterProvider()),
+      ],
+      child: MaterialApp(
+        title: 'PeriPage A9',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.lightTheme,
+        darkTheme: AppTheme.darkTheme,
+        themeMode: ThemeMode.light,
+        home: const HomeScreen(),
       ),
     );
   }

@@ -1,7 +1,7 @@
 name: peripage
-description: "A new Flutter project."
+description: "PeriPage A9 - Modern Thermal Printer App for PDF, Images & Labels"
 publish_to: 'none'
-version: 0.1.0+1
+version: 1.0.0+1
 
 environment:
   sdk: ^3.12.2
@@ -9,6 +9,36 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  
+  # State Management
+  provider: ^6.1.1
+  
+  # HTTP Client untuk komunikasi dengan Python backend
+  http: ^1.2.0
+  
+  # Image Picker untuk select gambar dari gallery/camera
+  image_picker: ^1.0.7
+  
+  # File Picker untuk select PDF
+  file_picker: ^6.1.1
+  
+  # Path Provider untuk akses file system
+  path_provider: ^2.1.2
+  
+  # Permission Handler untuk request permissions
+  permission_handler: ^11.3.0
+  
+  # UI Components
+  google_fonts: ^6.1.0
+  
+  # Bluetooth (untuk future BLE integration langsung dari Flutter)
+  flutter_blue_plus: ^1.31.0
+  
+  # Image manipulation
+  cached_network_image: ^3.3.1
+  
+  # Loading indicators
+  flutter_spinkit: ^5.2.0
 
 dev_dependencies:
   flutter_test:
@@ -17,3 +47,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/icons/
