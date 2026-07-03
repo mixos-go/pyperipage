@@ -127,6 +127,14 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install Visual Studio Build Tools (Required for CMake)
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '[16.11,)'
+      
+      - name: Install Ninja Build
+        run: choco install ninja --no-progress -y
+
       - name: Install PyInstaller & Dependencies
         run: pip install pyinstaller fastapi uvicorn pillow pyusb bleak
 
@@ -137,12 +145,21 @@ jobs:
           mkdir -p ../flutter_app/peripage/windows/runner/python_dist
           cp dist/peripage_backend.exe ../flutter_app/peripage/windows/runner/python_dist/
 
-      - name: Build Windows EXE
+      - name: Build Windows EXE with Ninja
         run: |
           cd flutter_app/peripage
           flutter build windows --release
-          if (Test-Path "windows/runner/python_dist/peripage_backend.exe") {
-            Copy-Item "windows/runner/python_dist/peripage_backend.exe" "build/windows/runner/Release/" -ErrorAction SilentlyContinue
+          
+      - name: Copy Backend to Build Directory
+        run: |
+          $backendPath = "flutter_app/peripage/windows/runner/python_dist/peripage_backend.exe"
+          $destPath = "flutter_app/peripage/build/windows/runner/Release/peripage_backend.exe"
+          if (Test-Path $backendPath) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $destPath) | Out-Null
+            Copy-Item $backendPath $destPath -Force
+            Write-Host "Backend copied successfully"
+          } else {
+            Write-Host "Backend not found, skipping copy"
           }
 
       - name: Create Windows Distribution
