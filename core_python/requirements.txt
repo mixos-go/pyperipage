@@ -1,0 +1,25 @@
+# Core Python Dependencies untuk PeriPage A9 Print Server
+# Install dengan: pip install -r requirements.txt
+
+# USB support (wajib untuk desktop)
+pyusb>=1.2.1
+
+# Image processing (wajib)
+pillow>=10.0.0
+
+# PDF support (opsional tapi direkomendasikan)
+pdf2image>=1.17.0
+
+# QR code generation (opsional)
+qrcode>=7.4.2
+
+# BLE support (wajib untuk mobile/bluetooth)
+bleak>=0.20.0
+
+# FastAPI server (wajib untuk bridge ke Flutter)
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6  # Untuk form data di FastAPI
+
+# Pydantic untuk data validation (sudah include di FastAPI)
+pydantic>=2.0.0
