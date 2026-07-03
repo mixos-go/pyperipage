@@ -1,260 +1,154 @@
 """
-python_service.py - Entry Point untuk Chaquopy (Android)
-
-File ini berfungsi sebagai jembatan antara Kotlin/Flutter dengan logic Python.
-Semua fungsi dipanggil secara synchronous dari Java/Kotlin melalui Chaquopy.
+Python Service Entry Point for Chaquopy Android Integration
+Bridges Flutter Dart code with Python printing logic
 """
-import json
-import io
+
+from peripage_a9.driver import PeriPageDriver
+from peripage_a9.transport_usb import USBTransport
+from peripage_a9.transport_ble import BLETransport
 from PIL import Image
+import io
+import base64
 
-# Import driver dan protocol
-from . import driver
-from . import protocol
+# Global driver instance
+_driver = None
 
-
-def get_supported_paper_widths():
-    """Return daftar lebar kertas yang didukung (mm)."""
-    return protocol.SUPPORTED_PAPER_WIDTHS_MM
-
-
-def get_default_paper_width():
-    """Return lebar kertas default."""
-    return protocol.DEFAULT_PAPER_WIDTH_MM
-
-
-def load_current_paper_width():
-    """Load setting lebar kertas terakhir yang disimpan."""
-    return protocol.load_paper_width_mm()
-
-
-def save_paper_width(paper_width_mm):
-    """Simpan setting lebar kertas."""
-    protocol.save_paper_width_mm(paper_width_mm, warning_tag="ANDROID")
-    return True
-
-
-def scan_ble_devices(timeout=5.0):
-    """
-    Scan device BLE PeriPage A9 di sekitar.
-    Return list of dict: [{'name': str, 'address': str, 'rssi': int}]
-    """
-    try:
-        from .transport_ble import BleTransportSync
-        transport = BleTransportSync()
-        devices = transport.discover_devices(timeout=timeout)
-        return devices
-    except Exception as e:
-        print(f"[ANDROID SERVICE ERROR] Gagal scan BLE: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
-
-
-def connect_usb(vid=0x09c5, pid=0x0200, paper_width_mm=None):
-    """
-    Koneksi ke printer via USB.
-    Return dict: {'success': bool, 'message': str}
-    """
-    try:
-        printer = driver.PeriPageA9USB(vid=vid, pid=pid, paper_width_mm=paper_width_mm)
-        success = printer.connect()
-        
-        if success:
-            # Simpan reference printer di global state untuk digunakan nanti
-            global _usb_printer
-            _usb_printer = printer
-            return {'success': True, 'message': 'USB connected successfully'}
-        else:
-            return {'success': False, 'message': 'Failed to connect via USB'}
-    except Exception as e:
-        return {'success': False, 'message': f'USB connection error: {str(e)}'}
-
-
-def connect_ble(device_address=None, paper_width_mm=None):
-    """
-    Koneksi ke printer via BLE.
-    Return dict: {'success': bool, 'message': str}
-    """
-    try:
-        printer = driver.PeriPageA9BLE(device_address=device_address, paper_width_mm=paper_width_mm)
-        success = printer.connect()
-        
-        if success:
-            # Simpan reference printer di global state untuk digunakan nanti
-            global _ble_printer
-            _ble_printer = printer
-            return {'success': True, 'message': 'BLE connected successfully'}
-        else:
-            return {'success': False, 'message': 'Failed to connect via BLE'}
-    except Exception as e:
-        return {'success': False, 'message': f'BLE connection error: {str(e)}'}
-
-
-def disconnect_usb():
-    """Disconnect printer USB."""
-    try:
-        global _usb_printer
-        if '_usb_printer' in globals() and _usb_printer:
-            _usb_printer._transport.close()
-            _usb_printer = None
-        return {'success': True, 'message': 'USB disconnected'}
-    except Exception as e:
-        return {'success': False, 'message': f'Disconnect error: {str(e)}'}
-
-
-def disconnect_ble():
-    """Disconnect printer BLE."""
-    try:
-        global _ble_printer
-        if '_ble_printer' in globals() and _ble_printer:
-            _ble_printer._transport.close()
-            _ble_printer = None
-        return {'success': True, 'message': 'BLE disconnected'}
-    except Exception as e:
-        return {'success': False, 'message': f'Disconnect error: {str(e)}'}
-
-
-def process_image_for_print(image_bytes, paper_width_mm=None):
-    """
-    Proses image (dari bytes) dengan smart crop dan resize.
+def initialize_driver(transport_type: str = "usb"):
+    """Initialize the printer driver with specified transport"""
+    global _driver
+    if transport_type == "ble":
+        transport = BLETransport()
+    else:
+        transport = USBTransport()
     
-    Args:
-        image_bytes: Image dalam format bytes (PNG/JPG)
-        paper_width_mm: Lebar kertas (opsional, pakai default jika None)
+    _driver = PeriPageDriver(transport)
+    return {"status": "initialized", "transport": transport_type}
+
+def connect_printer(device_address: str = None):
+    """Connect to the printer"""
+    global _driver
+    if not _driver:
+        return {"error": "Driver not initialized"}
     
-    Return:
-        Dict dengan:
-        - 'success': bool
-        - 'processed_image_bytes': bytes image yang sudah diproses (PNG)
-        - 'width': int (lebar pixel)
-        - 'height': int (tinggi pixel)
-        - 'error': str (jika ada error)
-    """
     try:
-        # Load image dari bytes
-        img = Image.open(io.BytesIO(image_bytes))
-        
-        # Gunakan paper width yang diberikan atau default
-        if paper_width_mm is None:
-            paper_width_mm = protocol.load_paper_width_mm()
-        
-        # Smart crop dan resize
-        processed_img = protocol.smart_crop_and_resize(img, paper_width_mm, error_tag="ANDROID")
-        
-        # Convert ke bytes (PNG format)
-        output = io.BytesIO()
-        processed_img.save(output, format='PNG')
-        processed_bytes = output.getvalue()
-        
+        _driver.connect(device_address)
+        return {"status": "connected", "address": device_address}
+    except Exception as e:
+        return {"error": str(e)}
+
+def disconnect_printer():
+    """Disconnect from the printer"""
+    global _driver
+    if _driver:
+        _driver.disconnect()
+        return {"status": "disconnected"}
+    return {"error": "Driver not initialized"}
+
+def scan_ble_devices():
+    """Scan for BLE devices (PeriPage A9)"""
+    from peripage_a9.transport_ble import scan_for_printer
+    try:
+        devices = scan_for_printer(timeout=5.0)
         return {
-            'success': True,
-            'processed_image_bytes': processed_bytes,
-            'width': processed_img.width,
-            'height': processed_img.height,
-            'error': None
+            "devices": [
+                {"address": d.address, "name": d.name, "rssi": d.rssi} 
+                for d in devices
+            ]
         }
-        
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            'success': False,
-            'processed_image_bytes': None,
-            'width': 0,
-            'height': 0,
-            'error': str(e)
-        }
+        return {"error": str(e)}
 
-
-def print_image_via_usb(image_bytes, paper_width_mm=None):
+def print_image(image_data: str, options: dict = None):
     """
-    Print image via USB.
-    
-    Args:
-        image_bytes: Image bytes (PNG/JPG)
-        paper_width_mm: Lebar kertas (opsional)
-    
-    Return:
-        Dict: {'success': bool, 'message': str}
+    Print image from base64 encoded string
+    image_data: base64 encoded image
+    options: dict with print settings (width, density, etc.)
     """
+    global _driver
+    if not _driver:
+        return {"error": "Driver not initialized"}
+    
     try:
-        # Pastikan printer terhubung
-        if '_usb_printer' not in globals() or _usb_printer is None:
-            return {'success': False, 'message': 'Printer USB tidak terhubung. Panggil connect_usb() terlebih dahulu.'}
+        # Decode base64 image
+        image_bytes = base64.b64decode(image_data)
+        image = Image.open(io.BytesIO(image_bytes))
         
-        printer = _usb_printer
+        # Apply print options
+        width = options.get("width", 576) if options else 576
+        dither = options.get("dither", True) if options else True
         
-        # Update paper width jika diberikan
-        if paper_width_mm is not None:
-            printer.set_paper_width(paper_width_mm, persist=True)
+        # Print the image
+        _driver.print_image(image, width=width, dither=dither)
         
-        # Proses image
-        img = Image.open(io.BytesIO(image_bytes))
-        processed_img = printer.smart_crop_and_resize(img)
-        
-        # Print (halaman 0 saja karena single image)
-        printer.print_pages([0], {0: processed_img})
-        
-        return {'success': True, 'message': 'Print sukses via USB'}
-        
+        return {"status": "success", "message": "Image printed"}
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {'success': False, 'message': f'Print error: {str(e)}'}
+        return {"error": str(e)}
 
-
-def print_image_via_ble(image_bytes, paper_width_mm=None):
+def print_pdf(pdf_data: str, options: dict = None):
     """
-    Print image via BLE.
-    
-    Args:
-        image_bytes: Image bytes (PNG/JPG)
-        paper_width_mm: Lebar kertas (opsional)
-    
-    Return:
-        Dict: {'success': bool, 'message': str}
+    Print PDF from base64 encoded string
+    pdf_data: base64 encoded PDF
+    options: dict with print settings
     """
+    global _driver
+    if not _driver:
+        return {"error": "Driver not initialized"}
+    
     try:
-        # Pastikan printer terhubung
-        if '_ble_printer' not in globals() or _ble_printer is None:
-            return {'success': False, 'message': 'Printer BLE tidak terhubung. Panggil connect_ble() terlebih dahulu.'}
+        # Decode base64 PDF
+        pdf_bytes = base64.b64decode(pdf_data)
         
-        printer = _ble_printer
+        # Use driver's PDF print method
+        _driver.print_pdf_from_bytes(pdf_bytes, options=options)
         
-        # Update paper width jika diberikan
-        if paper_width_mm is not None:
-            printer.set_paper_width(paper_width_mm, persist=True)
-        
-        # Proses image
-        img = Image.open(io.BytesIO(image_bytes))
-        processed_img = printer.smart_crop_and_resize(img)
-        
-        # Print (halaman 0 saja karena single image)
-        printer.print_pages([0], {0: processed_img})
-        
-        return {'success': True, 'message': 'Print sukses via BLE'}
-        
+        return {"status": "success", "message": "PDF printed"}
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {'success': False, 'message': f'Print error: {str(e)}'}
+        return {"error": str(e)}
 
+def print_text(text: str, options: dict = None):
+    """Print plain text"""
+    global _driver
+    if not _driver:
+        return {"error": "Driver not initialized"}
+    
+    try:
+        _driver.print_text(text, options=options)
+        return {"status": "success", "message": "Text printed"}
+    except Exception as e:
+        return {"error": str(e)}
 
-def check_usb_connection_status():
-    """Cek apakah printer USB sedang terhubung."""
-    if '_usb_printer' in globals() and _usb_printer and _usb_printer._transport:
-        return {'connected': True}
-    return {'connected': False}
+def get_printer_status():
+    """Get printer status"""
+    global _driver
+    if not _driver:
+        return {"error": "Driver not initialized"}
+    
+    try:
+        status = _driver.get_status()
+        return {"status": "success", "data": status}
+    except Exception as e:
+        return {"error": str(e)}
 
+def feed_paper(lines: int = 3):
+    """Feed paper by specified lines"""
+    global _driver
+    if not _driver:
+        return {"error": "Driver not initialized"}
+    
+    try:
+        _driver.feed(lines)
+        return {"status": "success", "lines": lines}
+    except Exception as e:
+        return {"error": str(e)}
 
-def check_ble_connection_status():
-    """Cek apakah printer BLE sedang terhubung."""
-    if '_ble_printer' in globals() and _ble_printer and _ble_printer._transport:
-        return {'connected': True}
-    return {'connected': False}
-
-
-# Global state untuk menyimpan instance printer
-_usb_printer = None
-_ble_printer = None
+def cut_paper():
+    """Cut the paper"""
+    global _driver
+    if not _driver:
+        return {"error": "Driver not initialized"}
+    
+    try:
+        _driver.cut()
+        return {"status": "success", "message": "Paper cut"}
+    except Exception as e:
+        return {"error": str(e)}
