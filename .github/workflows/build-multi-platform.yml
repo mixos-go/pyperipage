@@ -54,10 +54,10 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
-      - name: Setup Flutter 3.22.3 (LTS for Gradle compatibility)
+      - name: Setup Flutter 3.24.0 (Stable for Gradle 8 compatibility)
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.3'
+          flutter-version: '3.24.0'
           channel: 'stable'
           cache: true
 
@@ -91,7 +91,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.3'
+          flutter-version: '3.24.0'
           channel: 'stable'
 
       - name: Build iOS (No Codesign)
@@ -119,7 +119,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.3'
+          flutter-version: '3.24.0'
           channel: 'stable'
 
       - name: Setup Python
@@ -168,7 +168,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.3'
+          flutter-version: '3.24.0'
           channel: 'stable'
 
       - name: Setup Python
@@ -215,7 +215,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.3'
+          flutter-version: '3.24.0'
           channel: 'stable'
 
       - name: Setup Python
