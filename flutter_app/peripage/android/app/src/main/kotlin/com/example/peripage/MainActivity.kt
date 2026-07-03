@@ -10,6 +10,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import org.json.JSONObject
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.example.peripage/python"
@@ -24,52 +25,109 @@ class MainActivity: FlutterActivity() {
         
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "printFile" -> {
-                    val filePath = call.argument<String>("filePath")
-                    val paperSize = call.argument<String>("paperSize") ?: "58mm"
-                    val transportType = call.argument<String>("transportType") ?: "ble"
-                    
-                    try {
-                        val py = Python.getInstance()
-                        val module = py.getModule("peripage_a9.driver")
-                        
-                        // Call Python print function
-                        val success = module.callFunction("print_file", filePath, paperSize, transportType)
-                        result.success(success)
-                    } catch (e: Exception) {
-                        result.error("PYTHON_ERROR", e.message, null)
-                    }
+                "initializeDriver" -> {
+                    val transportType = call.argument<String>("transportType") ?: "usb"
+                    handlePythonCall("python_service", "initialize_driver", result, transportType)
                 }
                 
-                "scanDevices" -> {
-                    try {
-                        val py = Python.getInstance()
-                        val module = py.getModule("peripage_a9.transport_ble")
-                        
-                        // Call BLE scan
-                        val devices = module.callFunction("scan_devices")
-                        result.success(devices?.toList())
-                    } catch (e: Exception) {
-                        result.error("SCAN_ERROR", e.message, null)
-                    }
+                "connectPrinter" -> {
+                    val deviceAddress = call.argument<String>("deviceAddress")
+                    handlePythonCall("python_service", "connect_printer", result, deviceAddress)
+                }
+                
+                "disconnectPrinter" -> {
+                    handlePythonCall("python_service", "disconnect_printer", result)
+                }
+                
+                "scanBleDevices" -> {
+                    handlePythonCall("python_service", "scan_ble_devices", result)
+                }
+                
+                "printImage" -> {
+                    val imageData = call.argument<String>("imageData") ?: ""
+                    val options = call.argument<Map<String, Any>>("options")
+                    handlePythonCall("python_service", "print_image", result, imageData, options)
+                }
+                
+                "printPdf" -> {
+                    val pdfData = call.argument<String>("pdfData") ?: ""
+                    val options = call.argument<Map<String, Any>>("options")
+                    handlePythonCall("python_service", "print_pdf", result, pdfData, options)
+                }
+                
+                "printText" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    val options = call.argument<Map<String, Any>>("options")
+                    handlePythonCall("python_service", "print_text", result, text, options)
                 }
                 
                 "getPrinterStatus" -> {
-                    try {
-                        val py = Python.getInstance()
-                        val module = py.getModule("peripage_a9.driver")
-                        
-                        val status = module.callFunction("get_status")
-                        result.success(status)
-                    } catch (e: Exception) {
-                        result.error("STATUS_ERROR", e.message, null)
-                    }
+                    handlePythonCall("python_service", "get_printer_status", result)
+                }
+                
+                "feedPaper" -> {
+                    val lines = call.argument<Int>("lines") ?: 3
+                    handlePythonCall("python_service", "feed_paper", result, lines)
+                }
+                
+                "cutPaper" -> {
+                    handlePythonCall("python_service", "cut_paper", result)
                 }
                 
                 else -> {
                     result.notImplemented()
                 }
             }
+        }
+        
+        // Request necessary permissions
+        requestPermissions()
+    }
+    
+    private fun handlePythonCall(moduleName: String, functionName: String, result: MethodChannel.Result, vararg args: Any?) {
+        try {
+            val py = Python.getInstance()
+            val module = py.getModule(moduleName)
+            
+            // Build arguments for Python call
+            val pyArgs = args.filterNotNull().map { arg ->
+                when (arg) {
+                    is Map<*, *> -> {
+                        // Convert Map to Python dict
+                        val jsonStr = JSONObject(arg as? Map<String, Any>).toString()
+                        py.getModule("json").callFunction("loads", jsonStr)
+                    }
+                    else -> arg
+                }
+            }.toTypedArray()
+            
+            // Call Python function
+            val pyResult = module.callFunction(functionName, *pyArgs)
+            
+            // Convert Python result to Kotlin/Java object
+            val kotlinResult = when {
+                pyResult == null -> null
+                pyResult is Boolean -> pyResult
+                pyResult is Int -> pyResult
+                pyResult is String -> pyResult
+                else -> {
+                    // Try to convert complex objects to Map
+                    try {
+                        val jsonStr = pyResult.toString()
+                        if (jsonStr.startsWith("{") || jsonStr.startsWith("[")) {
+                            JSONObject(jsonStr).toMap()
+                        } else {
+                            pyResult.toString()
+                        }
+                    } catch (e: Exception) {
+                        pyResult.toString()
+                    }
+                }
+            }
+            
+            result.success(kotlinResult)
+        } catch (e: Exception) {
+            result.error("PYTHON_ERROR", e.message, e.stackTraceToString())
         }
     }
     
@@ -110,7 +168,11 @@ class MainActivity: FlutterActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 1001) {
-            // Handle permission result
+            // Handle permission result - all permissions granted or denied
+            val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+            if (!allGranted) {
+                // Show message to user about required permissions
+            }
         }
     }
 }
