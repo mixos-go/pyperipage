@@ -1,0 +1,22 @@
+# Requirements untuk Desktop Build (PyInstaller)
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.2
+
+# Transport & Protocol
+pyusb==1.2.1
+bleak==0.20.2
+dbus-next==0.2.3; sys_platform == 'linux'
+
+# Image Processing
+Pillow==10.1.0
+numpy==1.26.2
+
+# PDF Support
+reportlab==4.0.7
+pypdf==3.17.2
+
+# Utilities
+aiofiles==23.2.1
+loguru==0.7.2
