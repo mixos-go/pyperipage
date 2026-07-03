@@ -29,6 +29,7 @@ class PrinterProvider with ChangeNotifier {
   List<File> get selectedFiles => _selectedFiles;
   bool get isConnected => _printerStatus?.connected ?? false;
   bool get isServerAvailable = _serverAvailable;
+  ApiService get apiService => _apiService;
   bool _serverAvailable = false;
 
   /// Check if server is available
