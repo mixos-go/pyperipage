@@ -24,21 +24,11 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        
+
         // Chaquopy configuration
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-        }
-        
-        python {
-            version = "3.11"
-            pip {
-                install("pyusb")
-                install("bleak")
-                install("pillow")
-                install("pypdf2")
-                install("reportlab")
-            }
+            abiFilters.clear()
+            abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
         }
     }
 
@@ -49,10 +39,24 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
-    
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.12"
+        buildPython("/usr/bin/python3")
+        pip {
+            install("pyusb")
+            install("bleak")
+            install("pillow")
+            install("pypdf2")
+            install("reportlab")
+        }
+    }
+
     sourceSets {
         getByName("main") {
-            python.srcDir("src/main/python")
+            srcDir("src/main/python")
         }
     }
 }
