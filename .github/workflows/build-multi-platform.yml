@@ -130,10 +130,17 @@ jobs:
       - name: Install Visual Studio Build Tools (Required for CMake)
         uses: microsoft/setup-msbuild@v2
         with:
-          vs-version: '[16.11,)'
-      
+          vs-version: '[17.0,18.0)'
+          msbuild-architecture: x64
+
       - name: Install Ninja Build
         run: choco install ninja --no-progress -y
+
+      - name: Configure Windows build generator
+        shell: pwsh
+        run: |
+          echo "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
+          echo "CMAKE_GENERATOR_PLATFORM=x64" >> $env:GITHUB_ENV
 
       - name: Install PyInstaller & Dependencies
         run: pip install pyinstaller fastapi uvicorn pillow pyusb bleak

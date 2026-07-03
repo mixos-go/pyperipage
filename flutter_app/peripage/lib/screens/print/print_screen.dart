@@ -319,7 +319,7 @@ class _PrintScreenState extends State<PrintScreen> {
                           ),
                           const SizedBox(height: 12),
                           DropdownButtonFormField<int>(
-                            value: _selectedPaperWidth,
+                            initialValue: _selectedPaperWidth,
                             decoration: const InputDecoration(
                               border: OutlineInputBorder(),
                               labelText: 'Lebar Kertas (mm)',

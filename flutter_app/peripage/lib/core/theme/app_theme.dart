@@ -186,7 +186,7 @@ class AppTheme {
         error: errorColor,
       ),
       textTheme: GoogleFonts.robotoTextTheme(),
-      appBarTheme: AppBarTheme(
+      appBarTheme: const AppBarTheme(
         backgroundColor: primaryColor,
         foregroundColor: textLightColor,
         elevation: 0,

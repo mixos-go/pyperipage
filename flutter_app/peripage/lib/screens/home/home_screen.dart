@@ -173,7 +173,7 @@ class HomeTab extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(UiConstants.spacingMd),
                 decoration: BoxDecoration(
-                  color: AppTheme.warningColor.withOpacity(0.1),
+                  color: AppTheme.warningColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(UiConstants.borderRadiusMd),
                   border: Border.all(color: AppTheme.warningColor),
                 ),
