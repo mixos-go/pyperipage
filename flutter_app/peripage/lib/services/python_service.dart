@@ -1,46 +1,87 @@
 import 'package:flutter/services.dart';
 
-class PythonService {
-  static const MethodChannel _channel = MethodChannel('com.example.peripage/python');
+class PrinterService {
+  static const MethodChannel _channel = MethodChannel('com.pyperipage/printer');
 
-  /// Print file menggunakan Python core
-  static Future<bool> printFile({
-    required String filePath,
-    String paperSize = '58mm',
-    String transportType = 'ble',
-  }) async {
-    try {
-      final result = await _channel.invokeMethod('printFile', {
-        'filePath': filePath,
-        'paperSize': paperSize,
-        'transportType': transportType,
-      });
-      return result == true;
-    } on PlatformException catch (e) {
-      print('Python print error: ${e.message}');
-      return false;
-    }
-  }
-
-  /// Scan devices BLE menggunakan Python
-  static Future<List<dynamic>> scanDevices() async {
+  /// Scan perangkat BLE (iOS Native / Android Chaquopy)
+  static Future<Map<String, dynamic>> scanDevices() async {
     try {
       final result = await _channel.invokeMethod('scanDevices');
-      return result as List<dynamic>? ?? [];
+      return result as Map<String, dynamic>;
     } on PlatformException catch (e) {
-      print('Python scan error: ${e.message}');
-      return [];
+      print('Scan error: ${e.message}');
+      return {'status': 'error', 'message': e.message};
     }
   }
 
-  /// Get printer status dari Python
-  static Future<Map<String, dynamic>?> getPrinterStatus() async {
+  /// Connect ke printer
+  static Future<Map<String, dynamic>> connectToDevice(String deviceId) async {
     try {
-      final result = await _channel.invokeMethod('getPrinterStatus');
-      return result as Map<String, dynamic>?;
+      final result = await _channel.invokeMethod('connectToDevice', {
+        'deviceId': deviceId,
+      });
+      return result as Map<String, dynamic>;
     } on PlatformException catch (e) {
-      print('Python status error: ${e.message}');
-      return null;
+      print('Connect error: ${e.message}');
+      return {'status': 'error', 'message': e.message};
+    }
+  }
+
+  /// Disconnect dari printer
+  static Future<Map<String, dynamic>> disconnect() async {
+    try {
+      final result = await _channel.invokeMethod('disconnect');
+      return result as Map<String, dynamic>;
+    } on PlatformException catch (e) {
+      print('Disconnect error: ${e.message}');
+      return {'status': 'error', 'message': e.message};
+    }
+  }
+
+  /// Print teks dengan formatting
+  static Future<Map<String, dynamic>> printText({
+    required String text,
+    String align = 'left',
+    bool bold = false,
+    bool doubleSize = false,
+  }) async {
+    try {
+      final result = await _channel.invokeMethod('printText', {
+        'text': text,
+        'align': align,
+        'bold': bold,
+        'doubleSize': doubleSize,
+      });
+      return result as Map<String, dynamic>;
+    } on PlatformException catch (e) {
+      print('Print text error: ${e.message}');
+      return {'status': 'error', 'message': e.message};
+    }
+  }
+
+  /// Print gambar dari path file
+  static Future<Map<String, dynamic>> printImage(String imagePath) async {
+    try {
+      final result = await _channel.invokeMethod('printImage', {
+        'imagePath': imagePath,
+      });
+      return result as Map<String, dynamic>;
+    } on PlatformException catch (e) {
+      print('Print image error: ${e.message}');
+      return {'status': 'error', 'message': e.message};
+    }
+  }
+
+  /// Print PDF (akan diimplementasikan nanti)
+  static Future<Map<String, dynamic>> printPDF(String pdfPath) async {
+    try {
+      final result = await _channel.invokeMethod('printPDF', {
+        'pdfPath': pdfPath,
+      });
+      return result as Map<String, dynamic>;
+    } on PlatformException catch (e) {
+      print('Print PDF error: ${e.message}');
+      return {'status': 'error', 'message': e.message};
     }
   }
 }

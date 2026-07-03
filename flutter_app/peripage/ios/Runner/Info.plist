@@ -66,5 +66,10 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Bluetooth Privacy Description for iOS -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>This app needs Bluetooth access to connect and print to PeriPage thermal printers.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>This app needs Bluetooth access to discover and connect to PeriPage printers.</string>
 </dict>
 </plist>
