@@ -137,7 +137,7 @@ class HomeTab extends StatelessWidget {
               children: [
                 Icon(
                   provider.isConnected 
-                    ? Icons.print_connected 
+                    ? Icons.print 
                     : Icons.print_disabled,
                   color: provider.isConnected 
                     ? AppTheme.successColor 
@@ -262,7 +262,7 @@ class HomeTab extends StatelessWidget {
         ),
         _buildQuickActionCard(
           context,
-          icon: Icons.scan,
+          icon: Icons.bluetooth_searching,
           title: 'Scan BLE',
           subtitle: 'Cari device',
           onTap: () {

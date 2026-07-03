@@ -10,6 +10,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.chaquo.python.PyObject
 import org.json.JSONObject
 
 class MainActivity: FlutterActivity() {
@@ -88,43 +89,38 @@ class MainActivity: FlutterActivity() {
         try {
             val py = Python.getInstance()
             val module = py.getModule(moduleName)
-            
-            // Build arguments for Python call
+
             val pyArgs = args.filterNotNull().map { arg ->
                 when (arg) {
                     is Map<*, *> -> {
-                        // Convert Map to Python dict
-                        val jsonStr = JSONObject(arg as? Map<String, Any>).toString()
-                        py.getModule("json").callFunction("loads", jsonStr)
+                        val jsonStr = JSONObject(arg as Map<String, Any>).toString()
+                        py.getModule("json").callAttr("loads", jsonStr)
                     }
                     else -> arg
                 }
             }.toTypedArray()
-            
-            // Call Python function
-            val pyResult = module.callFunction(functionName, *pyArgs)
-            
-            // Convert Python result to Kotlin/Java object
+
+            val pyResult = module.callAttr(functionName, *pyArgs)
+
             val kotlinResult = when {
                 pyResult == null -> null
-                pyResult is Boolean -> pyResult
-                pyResult is Int -> pyResult
-                pyResult is String -> pyResult
+                pyResult.toString() == "True" -> true
+                pyResult.toString() == "False" -> false
+                pyResult.toString().matches(Regex("^-?\\d+$")) -> pyResult.toString().toInt()
                 else -> {
-                    // Try to convert complex objects to Map
                     try {
                         val jsonStr = pyResult.toString()
                         if (jsonStr.startsWith("{") || jsonStr.startsWith("[")) {
-                            JSONObject(jsonStr).toMap()
+                            JSONObject(jsonStr).toString()
                         } else {
-                            pyResult.toString()
+                            jsonStr
                         }
                     } catch (e: Exception) {
                         pyResult.toString()
                     }
                 }
             }
-            
+
             result.success(kotlinResult)
         } catch (e: Exception) {
             result.error("PYTHON_ERROR", e.message, e.stackTraceToString())
