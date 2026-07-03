@@ -1,0 +1,4 @@
+pyusb>=1.2.1
+pillow>=10.0.0
+pdf2image>=1.17.0
+qrcode>=7.4.2
