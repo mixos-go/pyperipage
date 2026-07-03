@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("com.chaquo.python")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -23,6 +24,22 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        
+        // Chaquopy configuration
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+        
+        python {
+            version = "3.11"
+            pip {
+                install("pyusb")
+                install("bleak")
+                install("pillow")
+                install("pypdf2")
+                install("reportlab")
+            }
+        }
     }
 
     buildTypes {
@@ -30,6 +47,12 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+    
+    sourceSets {
+        getByName("main") {
+            python.srcDir("src/main/python")
         }
     }
 }
