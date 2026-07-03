@@ -54,10 +54,10 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
-      - name: Setup Flutter 3.24.0 (Stable for Gradle 8 compatibility)
+      - name: Setup Flutter 3.44.4 (matches verified local build)
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.44.4'
           channel: 'stable'
           cache: true
 
@@ -91,12 +91,13 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.44.4'
           channel: 'stable'
 
       - name: Build iOS (No Codesign)
         run: |
           cd flutter_app/peripage
+          flutter config --enable-ios
           flutter build ios --release --no-codesign
           mkdir -p ../build_outputs/ios
           cp -r build/ios/iphoneos/Runner.app ../build_outputs/ios/ || echo "App bundle created"
@@ -119,7 +120,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.44.4'
           channel: 'stable'
 
       - name: Setup Python
@@ -155,12 +156,13 @@ jobs:
       - name: Build Windows EXE with Ninja
         run: |
           cd flutter_app/peripage
+          flutter config --enable-windows-desktop
           flutter build windows --release
           
       - name: Copy Backend to Build Directory
         run: |
           $backendPath = "flutter_app/peripage/windows/runner/python_dist/peripage_backend.exe"
-          $destPath = "flutter_app/peripage/build/windows/runner/Release/peripage_backend.exe"
+          $destPath = "flutter_app/peripage/build/windows/x64/runner/Release/peripage_backend.exe"
           if (Test-Path $backendPath) {
             New-Item -ItemType Directory -Force -Path (Split-Path $destPath) | Out-Null
             Copy-Item $backendPath $destPath -Force
@@ -171,8 +173,9 @@ jobs:
 
       - name: Create Windows Distribution
         run: |
-          cd flutter_app/peripage/build/windows/runner/Release
-          Compress-Archive -Path * -DestinationPath ../../../../build_outputs/windows/peripage-windows-${{ needs.setup.outputs.version }}.zip -Force
+          New-Item -ItemType Directory -Force -Path "flutter_app/build_outputs/windows" | Out-Null
+          cd flutter_app/peripage/build/windows/x64/runner/Release
+          Compress-Archive -Path * -DestinationPath ../../../../../build_outputs/windows/peripage-windows-${{ needs.setup.outputs.version }}.zip -Force
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
@@ -192,7 +195,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.44.4'
           channel: 'stable'
 
       - name: Setup Python
@@ -213,6 +216,7 @@ jobs:
       - name: Build macOS App
         run: |
           cd flutter_app/peripage
+          flutter config --enable-macos-desktop
           flutter build macos --release
           cp macos/Runner/python_dist/peripage_backend build/macos/Build/Products/Release/peripage.app/Contents/MacOS/ || echo "Backend copied"
 
@@ -239,7 +243,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.44.4'
           channel: 'stable'
 
       - name: Setup Python
@@ -263,13 +267,15 @@ jobs:
       - name: Build Linux App
         run: |
           cd flutter_app/peripage
+          flutter config --enable-linux-desktop
           flutter build linux --release
           cp linux/python_dist/peripage_backend build/linux/x64/release/bundle/ || echo "Backend copied"
 
       - name: Create Tarball
         run: |
+          mkdir -p flutter_app/build_outputs/linux
           cd flutter_app/peripage/build/linux/x64/release/bundle
-          tar -czf ../../../../build_outputs/linux/peripage-linux-${{ needs.setup.outputs.version }}.tar.gz *
+          tar -czf ../../../../../build_outputs/linux/peripage-linux-${{ needs.setup.outputs.version }}.tar.gz *
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
