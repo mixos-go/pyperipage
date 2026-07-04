@@ -20,7 +20,13 @@ pluginManagement {
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "8.11.1" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+    // Bump dari 1.9.24 (Juli 2026): plugin `share_plus` (dipakai fitur export
+    // log) di-compile pakai metadata Kotlin 2.2.0. Kotlin compiler versi
+    // lama (1.9.24, ke-resolve efektif jadi 2.0.0 lewat classpath) cuma bisa
+    // baca metadata sampai 2.1.0 -- gagal dengan error "Class 'kotlin.Unit'
+    // was compiled with an incompatible version of Kotlin". 2.2.20 sudah
+    // cukup untuk baca metadata 2.2.0 tersebut.
+    id("org.jetbrains.kotlin.android") version "2.2.20" apply false
     id("com.chaquo.python") version "17.0.0" apply false
 }
 

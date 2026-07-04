@@ -38,6 +38,9 @@ jobs:
         uses: actions/checkout@v4
       - name: Validate version
         run: echo "Building version ${{ github.event.inputs.version }}"
+      - name: Check peripage_a9 sync (library/ adalah source of truth)
+        run: |
+          python3 scripts/sync_peripage_a9.py --check
 
   build-android:
     needs: setup
@@ -139,6 +142,16 @@ jobs:
           cp dist/peripage-backend.exe ../flutter_app/peripage/windows/runner/python_dist/
 
       - name: Build Windows EXE
+        env:
+          # Fix Juli 2026: plugin `pdfx` (dipakai render PDF di Android) juga
+          # bawa proyek CMake untuk Windows (download pdfium), tapi
+          # CMakeLists.txt-nya pakai `cmake_minimum_required` versi lama
+          # (<3.5) yang sudah TIDAK didukung lagi oleh CMake terbaru di
+          # runner GitHub Actions -- errornya persis nyaranin fix ini:
+          # "add -DCMAKE_POLICY_VERSION_MINIMUM=3.5 to try configuring
+          # anyway". Env var ini dibaca CMake secara global, jadi tidak
+          # perlu edit CMakeLists.txt pihak ketiga manapun.
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           cd flutter_app/peripage
           flutter config --enable-windows-desktop
@@ -239,6 +252,12 @@ jobs:
           cp dist/peripage-backend ../flutter_app/peripage/linux/python_dist/
 
       - name: Build Linux App
+        env:
+          # Fix Juli 2026: sama seperti Windows -- pdfx bawa proyek CMake
+          # (download pdfium) yang bisa saja pakai cmake_minimum_required
+          # lama & tidak kompatibel dengan CMake terbaru. Ditambahkan
+          # proaktif di sini juga supaya tidak muncul error yang sama nanti.
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           cd flutter_app/peripage
           flutter config --enable-linux-desktop
