@@ -1,18 +1,24 @@
 """
 transport_usb.py
 
-Transport USB raw untuk PeriPage A9. Ini pindahan 1:1 dari force_detach_kernel()
-dan bagian USB-specific di execute_printing() versi lama (peripage_logic.py) --
-klaim interface, cari endpoint bulk OUT, kernel driver detach/reattach.
+Transport USB untuk PeriPage A9 di Android.
 
-Tidak ada perubahan pada logic detach kernel atau cara klaim endpoint. Yang
-berubah cuma dikemas jadi class dengan interface `.connect()` / `.write()` /
-`.close()` yang seragam dengan transport_bluetooth.py (nanti), supaya
-peripage_protocol.send_print_job() bisa dipakai lewat transport manapun.
+GANTI ARSITEKTUR (Juli 2026): sebelumnya pakai `pyusb` (usb.core.find()),
+yang TIDAK BISA jalan di Android:
+1. pyusb butuh backend `libusb` -- di Android tanpa root umumnya berujung
+   `usb.core.NoBackendError: No backend available`.
+2. Bahkan kalau ada backend, app Android non-root TIDAK BISA enumerasi
+   device USB mentah lewat filesystem seperti Linux/Windows -- akses fisik
+   WAJIB lewat `android.hardware.usb.UsbManager` (izin resmi dari user).
+
+Sekarang class ini jadi jembatan TIPIS ke `NativeUsbTransport` (Kotlin),
+yang beneran implementasi UsbManager + bulk transfer native. Interface
+`.connect()` / `.write(bytes)` / `.close()` SENGAJA dipertahankan identik
+supaya `driver.py` dan `protocol.py` TIDAK PERLU diubah sama sekali --
+keduanya cuma tahu "transport" yang punya 3 method itu, tidak peduli
+implementasi di baliknya pyusb atau Kotlin native.
 """
-import time
-import usb.core
-import usb.util
+from com.pyperipage import NativeUsbTransport
 
 
 class TransportError(Exception):
@@ -25,52 +31,29 @@ class UsbTransport:
     PRODUCT_ID = 0x0200
 
     def __init__(self):
-        self.dev = None
-        self.ep_out = None
-
-    def _force_detach_kernel(self):
-        dev = usb.core.find(idVendor=self.VENDOR_ID, idProduct=self.PRODUCT_ID)
-        if dev is not None:
-            try:
-                if dev.is_kernel_driver_active(0):
-                    dev.detach_kernel_driver(0)
-                    print("[TRANSPORT-USB] Driver kernel usblp berhasil dilepas.")
-                    time.sleep(0.3)
-            except Exception:
-                pass
-        return dev
+        self._native = NativeUsbTransport.INSTANCE
 
     def connect(self):
-        """Cari device di bus USB, lepas kunci kernel usblp, klaim endpoint OUT.
+        """Cari device USB (prioritas VENDOR_ID/PRODUCT_ID, fallback ke device
+        USB manapun yang attached & punya endpoint bulk OUT -- lihat komentar
+        `connect()` di NativeUsbTransport.kt untuk detail perilaku universal
+        ini), minta izin user lewat dialog sistem Android, lalu klaim endpoint.
         Return `self` supaya bisa dipakai sebagai context manager (`with`)."""
-        self.dev = self._force_detach_kernel()
-        if self.dev is None:
-            raise TransportError("Printer tidak ditemukan secara fisik di port USB.")
-
-        self.dev.set_configuration()
-        cfg = self.dev.get_active_configuration()
-        intf = cfg[(0, 0)]
-
-        self.ep_out = usb.util.find_descriptor(
-            intf,
-            custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
-        )
-
-        if self.ep_out is None:
-            raise TransportError("Gagal memetakan pipa data (Endpoint OUT) USB Printer.")
-
+        ok = self._native.connect(self.VENDOR_ID, self.PRODUCT_ID)
+        if not ok:
+            raise TransportError(
+                "Printer USB tidak ditemukan, izin USB ditolak, atau gagal klaim endpoint. "
+                "Pastikan printer terhubung lewat kabel USB-OTG dan izin USB di-Allow."
+            )
         return self
 
     def write(self, data: bytes):
-        self.ep_out.write(data)
+        ok = self._native.write(bytearray(data))
+        if not ok:
+            raise TransportError("Gagal mengirim data ke printer USB (koneksi terputus?).")
 
     def close(self):
-        try:
-            usb.util.release_interface(self.dev, 0)
-            self.dev.attach_kernel_driver(0)
-            print("[TRANSPORT-USB] Resource port USB berhasil dilepas secara aman.")
-        except Exception:
-            pass
+        self._native.close()
 
     def __enter__(self):
         return self.connect()
