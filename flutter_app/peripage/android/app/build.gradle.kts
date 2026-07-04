@@ -46,9 +46,26 @@ chaquopy {
         version = "3.12"
         buildPython("/usr/bin/python3")
         pip {
-            install("pyusb")
-            install("bleak")
             install("pillow")
+            // pyusb & bleak DIHAPUS dari build Android (Juli 2026):
+            // - pyusb butuh backend libusb yang di Android non-root berujung
+            //   "NoBackendError: No backend available", dan app biasa juga
+            //   tidak bisa enumerasi USB mentah tanpa lewat UsbManager resmi.
+            // - bleak backend Android-nya (bleak.backends.p4android) hardcoded
+            //   butuh python-for-android (import jnius, android.broadcast,
+            //   android.permissions) -- SAMA SEKALI TIDAK ADA di Chaquopy.
+            //   Tim BeeWare mengalami masalah identik (lihat
+            //   github.com/beeware/beeware/issues/181).
+            //   Transport USB & BLE untuk Android sekarang diimplementasikan
+            //   NATIVE di Kotlin (NativeUsbTransport.kt / NativeBleTransport.kt)
+            //   pakai UsbManager & BluetoothGatt langsung, dipanggil dari Python
+            //   (transport_usb.py / transport_ble.py) lewat Chaquopy Java
+            //   interop -- BUKAN lewat pip package lagi.
+            //   Di desktop (Windows/Linux/macOS), pyusb & bleak tetap dipasang
+            //   normal lewat pip biasa di core_python/requirements karena di
+            //   sana keduanya jalan sempurna (PyInstaller build, tidak
+            //   terpengaruh perubahan ini).
+            //
             // pypdf2, reportlab, & pymupdf DIHAPUS dari build Android:
             // - pypdf2/reportlab tidak bisa rasterisasi PDF->gambar.
             // - pymupdf (fitz) TIDAK PUNYA wheel prebuilt untuk Android di

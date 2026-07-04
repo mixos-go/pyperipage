@@ -8,7 +8,9 @@ import '../../data/models/printer_models.dart';
 
 /// Print Screen - Fitur utama untuk print PDF, Gambar, dan Label
 class PrintScreen extends StatefulWidget {
-  const PrintScreen({super.key});
+  final bool initialBatchMode;
+
+  const PrintScreen({super.key, this.initialBatchMode = false});
 
   @override
   State<PrintScreen> createState() => _PrintScreenState();
@@ -17,7 +19,7 @@ class PrintScreen extends StatefulWidget {
 class _PrintScreenState extends State<PrintScreen> {
   File? _selectedFile;
   List<File> _selectedFiles = [];
-  bool _isBatchMode = false;
+  late bool _isBatchMode;
   int? _selectedPaperWidth;
   List<int> _pdfPages = []; // Untuk select halaman PDF
   bool _showPreview = false;
@@ -26,6 +28,7 @@ class _PrintScreenState extends State<PrintScreen> {
   @override
   void initState() {
     super.initState();
+    _isBatchMode = widget.initialBatchMode;
     _loadConfig();
   }
 

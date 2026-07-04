@@ -1,2 +1,24 @@
 #include "../../Flutter/Flutter-Release.xcconfig"
 #include "Warnings.xcconfig"
+
+// Matikan enforcement code signing untuk build Release (Juli 2026).
+//
+// Tanpa baris ini, `flutter build macos --release` di CI (atau di mesin
+// mana pun tanpa Apple Developer account / Team ID) akan macet/gagal di
+// tahap "Automatically manage signing" karena Xcode nunggu Team yang valid
+// dipilih -- padahal flutter build macos TIDAK punya flag --no-codesign
+// seperti flutter build ios.
+//
+// CODE_SIGN_IDENTITY = "-" artinya ad-hoc signing (self-signed, tanpa
+// sertifikat Apple). Hasil .app bisa dijalankan di mesin yang build-nya
+// sendiri, tapi kalau didistribusikan ke mesin lain, macOS Gatekeeper akan
+// tetap kasih warning "unidentified developer" -- user harus klik kanan ->
+// Open, atau app-nya perlu di-notarize resmi pakai Apple Developer account
+// (US$99/tahun) kalau mau distribusi mulus tanpa warning.
+//
+// Kalau nanti ada Apple Developer account & mau signing/notarization asli,
+// HAPUS 3 baris di bawah ini dan set DEVELOPMENT_TEAM ke Team ID kamu di
+// Xcode (Runner target > Signing & Capabilities).
+CODE_SIGN_IDENTITY = -
+CODE_SIGNING_REQUIRED = NO
+CODE_SIGNING_ALLOWED = NO

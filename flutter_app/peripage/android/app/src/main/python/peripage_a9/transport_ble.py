@@ -1,24 +1,39 @@
 """
 transport_ble.py
 
-Transport Bluetooth Low Energy (BLE) untuk PeriPage A9.
-Menggunakan library `bleak` untuk komunikasi lintas platform (Windows, macOS, Linux, Android, iOS).
+Transport Bluetooth Low Energy (BLE) untuk PeriPage A9 di Android.
 
-Peripage A9 BLE menggunakan service UUID dan characteristic UUID khusus untuk transfer data print.
-Interface sama dengan UsbTransport: .connect(), .write(), .close()
+GANTI ARSITEKTUR (Juli 2026): sebelumnya pakai `bleak`, yang TIDAK BISA jalan
+di Android lewat Chaquopy. Backend Android bleak (`bleak.backends.p4android`)
+hardcoded butuh `python-for-android` -- dia `import jnius`,
+`from android.broadcast import BroadcastReceiver`,
+`from android.permissions import ...`, yang SEMUANYA cuma ada di ekosistem
+python-for-android (Kivy/Buildozer), sama sekali tidak ada di Chaquopy. Tim
+BeeWare mengalami masalah persis sama saat mereka juga pakai Chaquopy
+(lihat github.com/beeware/beeware/issues/181) -- ini bukan salah konfigurasi,
+memang bleak tidak kompatibel dengan Chaquopy.
+
+Sekarang class di file ini jadi jembatan TIPIS ke `NativeBleTransport`
+(Kotlin), yang beneran implementasi `BluetoothLeScanner`/`BluetoothGatt`
+native Android. Interface `.discover_devices()` / `.connect()` /
+`.write(bytes)` / `.close()` SENGAJA dipertahankan identik supaya
+`driver.py` TIDAK PERLU diubah sama sekali.
+
+UNIVERSAL DEVICE SUPPORT: tidak lagi hardcode ke 1 service/characteristic
+UUID PeriPage. NativeBleTransport men-scan SEMUA characteristic writable di
+device manapun yang connect (prioritas ke UUID printer BLE yang umum lintas
+merk, fallback ke characteristic writable apa pun) -- jadi printer BLE merk
+lain (bukan cuma PeriPage) juga bisa dipakai selama protokol datanya
+kompatibel (raw byte tunnel), tanpa perlu tahu UUID persisnya di awal.
+
+Karena NativeBleTransport Kotlin sudah sepenuhnya synchronous/blocking
+(pakai CountDownLatch internal buat nunggu callback BLE), wrapper asyncio
+yang dulu dipakai buat `bleak` (yang async) SUDAH TIDAK DIPERLUKAN LAGI --
+class di sini langsung synchronous dari awal, jadi lebih simpel.
 """
-import asyncio
-import traceback
 from typing import Optional
 
-try:
-    from bleak import BleakClient, BleakScanner
-    from bleak.exc import BleakError
-except ImportError:
-    raise ImportError(
-        "Library 'bleak' diperlukan untuk transport BLE. "
-        "Install dengan: pip install bleak"
-    )
+from com.pyperipage import NativeBleTransport
 
 
 class TransportError(Exception):
@@ -26,259 +41,109 @@ class TransportError(Exception):
     pass
 
 
-class BleTransport:
-    """
-    Transport handler untuk PeriPage A9 via Bluetooth Low Energy.
-
-    UUID di bawah dikonfirmasi lewat inspeksi manual GATT table pakai nRF Connect
-    langsung ke unit PeriPage_A9 fisik (Juli 2026), BUKAN placeholder generik.
-    Service ini dikenal sebagai "ISSC Transparent UART" -- dipakai juga di banyak
-    printer thermal BLE murah lain (cat-printer, Goojprt, dll), fungsinya
-    nge-tunnel byte mentah langsung ke MCU printer.
-    """
-
-    SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455"          # ISSC Transparent UART service
-    CHARACTERISTIC_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3"    # RX (write dari app ke printer)
-    NOTIFY_UUID = "49535343-1e4d-4bd9-ba61-23c647249616"            # TX (notify dari printer ke app)
-
-    # Nama iklan BLE printer ini "PeriPage_A9_BLE" (dari characteristic Device Name 0x2A00),
-    # tapi header koneksi nRF Connect nunjukin "PERIPAGE_A9" -- cocokkan keduanya biar aman.
-    DEVICE_NAME = "PeriPage_A9"
-    
-    def __init__(self, device_address: Optional[str] = None):
-        """
-        Inisialisasi transport BLE.
-        
-        Args:
-            device_address: MAC address atau UUID device (opsional). 
-                           Jika None, akan mencari berdasarkan DEVICE_NAME.
-        """
-        self.device_address = device_address
-        self.client: Optional[BleakClient] = None
-        self._connected = False
-        self._characteristic_uuid = self.CHARACTERISTIC_UUID
-    
-    async def discover_devices(self, timeout: float = 5.0) -> list:
-        """
-        Scan dan temukan device BLE PeriPage A9 di sekitar.
-        
-        Args:
-            timeout: Durasi scanning dalam detik.
-            
-        Returns:
-            List of dict dengan info device: {'name': str, 'address': str, 'rssi': int}
-        """
-        print("[TRANSPORT-BLE] Memulai scanning device BLE...")
-        try:
-            devices = await BleakScanner.discover(timeout=timeout)
-            found_devices = []
-            
-            for device in devices:
-                # Cari device dengan nama mengandung "PeriPage" atau "A9"
-                if device.name and ("PeriPage" in device.name or "A9" in device.name or "PP" in device.name):
-                    found_devices.append({
-                        'name': device.name,
-                        'address': device.address,
-                        'rssi': device.rssi
-                    })
-                    print(f"[TRANSPORT-BLE] Ditemukan: {device.name} ({device.address}) RSSI: {device.rssi}")
-            
-            if not found_devices:
-                print("[TRANSPORT-BLE] Tidak menemukan printer PeriPage A9. Pastikan printer nyala dan dalam mode pairing.")
-            
-            return found_devices
-            
-        except BleakError as e:
-            print(f"[TRANSPORT-BLE ERROR] Gagal scanning: {e}")
-            traceback.print_exc()
-            raise TransportError(f"Gagal scanning BLE: {e}")
-    
-    async def connect(self, timeout: float = 10.0) -> 'BleTransport':
-        """
-        Koneksi ke printer PeriPage A9 via BLE.
-        
-        Args:
-            timeout: Timeout koneksi dalam detik.
-            
-        Returns:
-            Self untuk method chaining.
-            
-        Raises:
-            TransportError: Jika device tidak ditemukan atau gagal koneksi.
-        """
-        if self._connected and self.client:
-            print("[TRANSPORT-BLE] Sudah terhubung.")
-            return self
-        
-        try:
-            # Tentukan address device
-            address = self.device_address
-            
-            if not address:
-                # Auto-discovery berdasarkan nama
-                print(f"[TRANSPORT-BLE] Mencari device dengan nama: {self.DEVICE_NAME}")
-                devices = await self.discover_devices(timeout=5.0)
-                
-                if not devices:
-                    raise TransportError(
-                        f"Printer '{self.DEVICE_NAME}' tidak ditemukan. "
-                        "Pastikan printer nyala, dalam mode pairing, dan bluetooth aktif."
-                    )
-                
-                # Ambil device pertama yang cocok
-                address = devices[0]['address']
-                print(f"[TRANSPORT-BLE] Menghubungkan ke: {devices[0]['name']} ({address})")
-            
-            # Buat client dan connect
-            self.client = BleakClient(address)
-            await self.client.connect(timeout=timeout)
-            
-            if not self.client.is_connected:
-                raise TransportError("Gagal membangun koneksi BLE.")
-            
-            # Verify service dan characteristic tersedia
-            services = self.client.services
-            print(f"[TRANSPORT-BLE] Terhubung! Menemukan {len(services)} services.")
-            
-            # Cari characteristic untuk write
-            char = None
-            try:
-                char = self.client.services.get_characteristic(self._characteristic_uuid)
-            except Exception:
-                # Coba cari characteristic writeable lainnya di service print
-                for service in services:
-                    if self.SERVICE_UUID.lower() in service.uuid.lower():
-                        for c in service.characteristics:
-                            if 'write' in str(c.properties).lower():
-                                self._characteristic_uuid = c.uuid
-                                char = c
-                                print(f"[TRANSPORT-BLE] Menggunakan characteristic: {c.uuid}")
-                                break
-                        break
-            
-            if not char:
-                print(f"[TRANSPORT-BLE WARNING] Characteristic {self._characteristic_uuid} tidak ditemukan. "
-                      f"Menggunakan fallback. Mungkin perlu penyesuaian UUID.")
-            
-            self._connected = True
-            print("[TRANSPORT-BLE] Koneksi BLE berhasil.")
-            return self
-            
-        except BleakError as e:
-            print(f"[TRANSPORT-BLE ERROR] Gagal koneksi: {e}")
-            traceback.print_exc()
-            raise TransportError(f"Gagal koneksi BLE: {e}")
-        except Exception as e:
-            print(f"[TRANSPORT-BLE ERROR] Error tak terduga: {e}")
-            traceback.print_exc()
-            raise TransportError(f"Error koneksi: {e}")
-    
-    async def write(self, data: bytes) -> None:
-        """
-        Kirim data byte ke printer via BLE.
-        
-        Args:
-            data: Data byte yang akan dikirim.
-            
-        Raises:
-            TransportError: Jika tidak terhubung atau gagal kirim.
-        """
-        if not self._connected or not self.client:
-            raise TransportError("Printer belum terhubung. Panggil .connect() terlebih dahulu.")
-        
-        if not self.client.is_connected:
-            raise TransportError("Koneksi BLE terputus.")
-        
-        try:
-            # BLE memiliki MTU terbatas, mungkin perlu chunking untuk data besar
-            # Untuk printer thermal, biasanya MTU ~20-512 bytes tergantung device
-            mtu_size = self.client.mtu_size if hasattr(self.client, 'mtu_size') else 20
-            # Gunakan 80% dari MTU untuk safety margin
-            max_chunk_size = int(mtu_size * 0.8)
-            
-            # Chunk data jika terlalu besar
-            for i in range(0, len(data), max_chunk_size):
-                chunk = data[i:i + max_chunk_size]
-                await self.client.write_gatt_char(self._characteristic_uuid, chunk, response=True)
-                # Small delay untuk stabilitas
-                await asyncio.sleep(0.002)
-                
-        except BleakError as e:
-            print(f"[TRANSPORT-BLE ERROR] Gagal kirim data: {e}")
-            traceback.print_exc()
-            raise TransportError(f"Gagal kirim data BLE: {e}")
-    
-    async def close(self) -> None:
-        """
-        Tutup koneksi BLE dan lepas resource.
-        """
-        if self.client and self._connected:
-            try:
-                await self.client.disconnect()
-                print("[TRANSPORT-BLE] Koneksi BLE ditutup.")
-            except Exception as e:
-                print(f"[TRANSPORT-BLE WARNING] Gagal menutup koneksi dengan bersih: {e}")
-            finally:
-                self.client = None
-                self._connected = False
-    
-    async def __aenter__(self) -> 'BleTransport':
-        """Async context manager entry."""
-        return await self.connect()
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
-        """Async context manager exit."""
-        await self.close()
-        return False
-
-
-# Wrapper synchronous untuk kompatibilitas dengan code existing
-# (karena bleak adalah async library, tapi code lama kita synchronous)
 class BleTransportSync:
     """
-    Wrapper synchronous untuk BleTransport.
-    Menggunakan asyncio.run() untuk menjalankan operasi async.
-    Cocok untuk integrasi dengan code existing yang belum async.
+    Transport handler synchronous untuk printer BLE (PeriPage A9 maupun merk
+    lain yang kompatibel). Nama class dipertahankan `BleTransportSync` (bukan
+    `BleTransport`) untuk kompatibilitas mundur dengan python_service.py yang
+    sudah memanggil `from peripage_a9.transport_ble import BleTransportSync`.
     """
-    
+
     def __init__(self, device_address: Optional[str] = None):
-        self._async_transport = BleTransport(device_address)
-        self._loop = None
-    
-    def _run_async(self, coro):
-        """Jalankan coroutine async secara synchronous."""
-        if self._loop is None or self._loop.is_closed():
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-        return self._loop.run_until_complete(coro)
-    
+        """
+        Args:
+            device_address: MAC address device BLE (opsional). Kalau None,
+                           connect() akan gagal -- caller (driver.py /
+                           python_service.py) diharapkan sudah memanggil
+                           discover_devices() dulu buat dapetin address-nya,
+                           lalu user pilih salah satu lewat UI (lihat
+                           BLE device picker di home_screen.dart).
+        """
+        self.device_address = device_address
+        self._native = NativeBleTransport.INSTANCE
+        self._connected = False
+
     def discover_devices(self, timeout: float = 5.0) -> list:
-        """Scan device BLE (synchronous wrapper)."""
-        return self._run_async(self._async_transport.discover_devices(timeout))
-    
+        """
+        Scan device BLE di sekitar. UNIVERSAL: mengembalikan SEMUA device BLE
+        bernama yang ditemukan (tidak difilter cuma nama "PeriPage"/"A9"),
+        supaya printer BLE merk lain juga muncul & bisa dipilih user.
+
+        Returns:
+            List of dict: {'name': str, 'address': str, 'rssi': int}
+        """
+        timeout_ms = int(timeout * 1000)
+        try:
+            devices = self._native.discoverDevices(timeout_ms)
+        except Exception as e:
+            raise TransportError(f"Gagal scanning BLE: {e}")
+
+        # PyObject list-of-map dari Kotlin -> list of dict Python biasa.
+        return [dict(d) for d in devices]
+
     def connect(self, timeout: float = 10.0) -> 'BleTransportSync':
-        """Koneksi ke printer (synchronous wrapper)."""
-        self._run_async(self._async_transport.connect(timeout))
+        """
+        Koneksi ke device BLE. Kalau `device_address` tidak diisi saat init,
+        auto-discovery lewat nama TIDAK dilakukan di sini lagi (beda dari
+        versi bleak lama) -- device_address WAJIB sudah diketahui sebelum
+        connect() dipanggil, karena scanning untuk cari-by-name di Android
+        butuh permission runtime yang sebaiknya sudah selesai di tahap
+        discover_devices() (lihat BLE device picker di UI).
+
+        Returns:
+            Self untuk method chaining / context manager.
+
+        Raises:
+            TransportError: Jika device_address kosong atau gagal connect.
+        """
+        if self._connected:
+            return self
+
+        if not self.device_address:
+            raise TransportError(
+                "Address device BLE belum diketahui. Panggil discover_devices() "
+                "dulu untuk memilih printer, baru connect() dengan address-nya."
+            )
+
+        timeout_ms = int(timeout * 1000)
+        try:
+            ok = self._native.connect(self.device_address, timeout_ms)
+        except Exception as e:
+            raise TransportError(f"Gagal koneksi BLE: {e}")
+
+        if not ok:
+            raise TransportError(
+                f"Gagal terhubung ke device BLE {self.device_address}. "
+                "Pastikan printer masih menyala & dalam jangkauan."
+            )
+
+        self._connected = True
         return self
-    
+
     def write(self, data: bytes) -> None:
-        """Kirim data (synchronous wrapper)."""
-        self._run_async(self._async_transport.write(data))
-    
+        """Kirim data byte ke printer via BLE, otomatis di-chunk sesuai MTU
+        (lihat NativeBleTransport.write())."""
+        if not self._connected:
+            raise TransportError("Printer belum terhubung. Panggil .connect() terlebih dahulu.")
+
+        ok = self._native.write(bytearray(data))
+        if not ok:
+            raise TransportError("Gagal kirim data BLE (koneksi terputus?).")
+
     def close(self) -> None:
-        """Tutup koneksi (synchronous wrapper)."""
-        self._run_async(self._async_transport.close())
-        if self._loop and not self._loop.is_closed():
-            self._loop.close()
-    
+        """Tutup koneksi BLE dan lepas resource."""
+        try:
+            self._native.close()
+        finally:
+            self._connected = False
+
     def __enter__(self) -> 'BleTransportSync':
         return self.connect()
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         self.close()
         return False
 
 
-# Alias untuk backward compatibility - gunakan sync version sebagai default
-# agar interface sama dengan UsbTransport
+# Alias untuk backward compatibility -- driver.py mengimpor nama ini.
 BleTransportDefault = BleTransportSync

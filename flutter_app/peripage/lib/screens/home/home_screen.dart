@@ -74,6 +74,89 @@ class _HomeScreenState extends State<HomeScreen> {
 class HomeTab extends StatelessWidget {
   const HomeTab({super.key});
 
+  Future<void> _handleRefresh(BuildContext context, PrinterProvider provider) async {
+    await provider.loadPrinterStatus();
+    await provider.loadPrinterConfig();
+    if (!context.mounted) return;
+    if (provider.errorMessage != null) {
+      _showSnackBar(context, provider.errorMessage!, isError: true);
+    }
+  }
+
+  Future<void> _handleConnectUsb(BuildContext context, PrinterProvider provider) async {
+    final success = await provider.connectUsb();
+    if (!context.mounted) return;
+    if (success) {
+      _showSnackBar(context, 'Terhubung ke printer via USB.');
+    } else {
+      _showSnackBar(context, provider.errorMessage ?? 'Gagal terhubung via USB.', isError: true);
+    }
+  }
+
+  Future<void> _handleScanBle(BuildContext context, PrinterProvider provider) async {
+    await provider.discoverBleDevices();
+    if (!context.mounted) return;
+    if (provider.errorMessage != null) {
+      _showSnackBar(context, provider.errorMessage!, isError: true);
+      return;
+    }
+    if (provider.bleDevices.isEmpty) {
+      _showSnackBar(context, 'Tidak ada device BLE ditemukan di sekitar.');
+      return;
+    }
+    _showBleDevicePicker(context, provider);
+  }
+
+  void _showBleDevicePicker(BuildContext context, PrinterProvider provider) {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(UiConstants.spacingMd),
+              child: Text(
+                'Pilih Printer BLE',
+                style: Theme.of(sheetContext).textTheme.titleMedium,
+              ),
+            ),
+            ...provider.bleDevices.map((device) => ListTile(
+                  leading: const Icon(Icons.bluetooth),
+                  title: Text(device.name),
+                  subtitle: Text(device.address),
+                  trailing: device.rssi != null ? Text('${device.rssi} dBm') : null,
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    final success = await provider.connectBle(deviceAddress: device.address);
+                    if (!context.mounted) return;
+                    if (success) {
+                      _showSnackBar(context, 'Terhubung ke ${device.name}.');
+                    } else {
+                      _showSnackBar(
+                        context,
+                        provider.errorMessage ?? 'Gagal terhubung ke ${device.name}.',
+                        isError: true,
+                      );
+                    }
+                  },
+                )),
+            const SizedBox(height: UiConstants.spacingMd),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSnackBar(BuildContext context, String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? AppTheme.errorColor : AppTheme.successColor,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<PrinterProvider>();
@@ -84,18 +167,12 @@ class HomeTab extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () {
-              provider.loadPrinterStatus();
-              provider.loadPrinterConfig();
-            },
+            onPressed: () => _handleRefresh(context, provider),
           ),
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () async {
-          await provider.loadPrinterStatus();
-          await provider.loadPrinterConfig();
-        },
+        onRefresh: () => _handleRefresh(context, provider),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(UiConstants.spacingMd),
@@ -204,7 +281,7 @@ class HomeTab extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: provider.isLoading ? null : () => provider.connectUsb(),
+                    onPressed: provider.isLoading ? null : () => _handleConnectUsb(context, provider),
                     icon: const Icon(Icons.usb),
                     label: const Text('USB'),
                   ),
@@ -212,7 +289,12 @@ class HomeTab extends StatelessWidget {
                 const SizedBox(width: UiConstants.spacingSm),
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: provider.isLoading ? null : () => provider.connectBle(),
+                    // Connect BLE "buta" (tanpa address) sudah tidak didukung lagi
+                    // sejak BLE jadi universal (bisa ke printer merk apa pun, bukan
+                    // cuma yang bernama "PeriPage") -- device_address WAJIB dipilih
+                    // dulu lewat scan, makanya tombol ini pakai alur yang sama
+                    // dengan Quick Action "Scan BLE".
+                    onPressed: provider.isLoading ? null : () => _handleScanBle(context, provider),
                     icon: const Icon(Icons.bluetooth),
                     label: const Text('BLE'),
                   ),
@@ -239,7 +321,10 @@ class HomeTab extends StatelessWidget {
           title: 'Print Gambar',
           subtitle: 'Dari gallery',
           onTap: () {
-            // Navigate to print screen with image mode
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PrintScreen()),
+            );
           },
         ),
         _buildQuickActionCard(
@@ -248,7 +333,10 @@ class HomeTab extends StatelessWidget {
           title: 'Print PDF',
           subtitle: 'Resi & Label',
           onTap: () {
-            // Navigate to print screen with PDF mode
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PrintScreen()),
+            );
           },
         ),
         _buildQuickActionCard(
@@ -257,7 +345,10 @@ class HomeTab extends StatelessWidget {
           title: 'Batch Print',
           subtitle: 'Multiple files',
           onTap: () {
-            // Navigate to print screen with batch mode
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PrintScreen(initialBatchMode: true)),
+            );
           },
         ),
         _buildQuickActionCard(
@@ -266,7 +357,7 @@ class HomeTab extends StatelessWidget {
           title: 'Scan BLE',
           subtitle: 'Cari device',
           onTap: () {
-            provider.discoverBleDevices();
+            _handleScanBle(context, provider);
           },
         ),
       ],

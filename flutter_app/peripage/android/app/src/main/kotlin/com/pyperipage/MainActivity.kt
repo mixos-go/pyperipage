@@ -3,6 +3,8 @@ package com.pyperipage
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -13,6 +15,7 @@ import com.chaquo.python.android.AndroidPlatform
 import com.chaquo.python.PyObject
 import org.json.JSONObject
 import org.json.JSONArray
+import java.util.concurrent.Executors
 
 /**
  * MethodChannel handler untuk Chaquopy.
@@ -28,12 +31,27 @@ import org.json.JSONArray
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.pyperipage/printer"
 
+    // Koneksi USB/BLE (scan, request permission, connect) bisa makan waktu
+    // beberapa detik sampai puluhan detik (nunggu user approve dialog izin).
+    // MethodChannel handler dipanggil di platform/main thread secara default --
+    // kalau dijalankan langsung di situ, UI akan freeze / berpotensi ANR.
+    // Semua panggilan ke Python sekarang dieksekusi di background thread ini,
+    // hasilnya baru dikirim balik ke Dart lewat main thread (wajib untuk
+    // MethodChannel.Result).
+    private val backgroundExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(this))
         }
+
+        // Native transport USB/BLE (pengganti pyusb/bleak yang tidak jalan di
+        // Chaquopy Android) -- lihat NativeUsbTransport.kt & NativeBleTransport.kt.
+        NativeUsbTransport.init(this)
+        NativeBleTransport.init(this)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -109,34 +127,41 @@ class MainActivity: FlutterActivity() {
      * Konversi argumen Kotlin -> PyObject lalu panggil fungsi Python di module
      * python_service, konversi balik hasilnya (dict Python) jadi JSON string
      * yang di-decode ulang di sisi Dart.
+     *
+     * Dieksekusi di background thread (lihat backgroundExecutor) karena
+     * connect_usb/connect_ble/discover_ble_devices bisa blocking lama
+     * (nunggu dialog izin USB, scan BLE, dsb). result.success()/error() HARUS
+     * tetap dipanggil di main thread, makanya di-post lewat mainHandler.
      */
     private fun handlePythonCall(functionName: String, result: MethodChannel.Result, vararg args: Any?) {
-        try {
-            val py = Python.getInstance()
-            val module = py.getModule("python_service")
+        backgroundExecutor.execute {
+            try {
+                val py = Python.getInstance()
+                val module = py.getModule("python_service")
 
-            val pyArgs = args.map { arg ->
-                when (arg) {
-                    null -> null
-                    is List<*> -> {
-                        val jsonArr = JSONArray(arg)
-                        py.getModule("json").callAttr("loads", jsonArr.toString())
+                val pyArgs = args.map { arg ->
+                    when (arg) {
+                        null -> null
+                        is List<*> -> {
+                            val jsonArr = JSONArray(arg)
+                            py.getModule("json").callAttr("loads", jsonArr.toString())
+                        }
+                        else -> arg
                     }
-                    else -> arg
-                }
-            }.toTypedArray()
+                }.toTypedArray()
 
-            val pyResult: PyObject = module.callAttr(functionName, *pyArgs)
+                val pyResult: PyObject = module.callAttr(functionName, *pyArgs)
 
-            // python_service.py selalu return dict -- serialize balik via json.dumps
-            // di sisi Python biar strukturnya (nested dict/list) terjaga persis,
-            // baru di-decode lagi di Dart pakai json.decode().
-            val jsonModule = py.getModule("json")
-            val jsonStr = jsonModule.callAttr("dumps", pyResult).toString()
+                // python_service.py selalu return dict -- serialize balik via json.dumps
+                // di sisi Python biar strukturnya (nested dict/list) terjaga persis,
+                // baru di-decode lagi di Dart pakai json.decode().
+                val jsonModule = py.getModule("json")
+                val jsonStr = jsonModule.callAttr("dumps", pyResult).toString()
 
-            result.success(jsonStr)
-        } catch (e: Exception) {
-            result.error("PYTHON_ERROR", e.message, e.stackTraceToString())
+                mainHandler.post { result.success(jsonStr) }
+            } catch (e: Exception) {
+                mainHandler.post { result.error("PYTHON_ERROR", e.message, e.stackTraceToString()) }
+            }
         }
     }
 
