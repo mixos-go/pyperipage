@@ -5,6 +5,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/constants.dart';
 import '../print/print_screen.dart';
 import '../settings/settings_screen.dart';
+import '../../services/desktop_backend_service.dart';
 
 /// Home Screen - Main dashboard aplikasi PeriPage A9
 class HomeScreen extends StatefulWidget {
@@ -75,6 +76,7 @@ class HomeTab extends StatelessWidget {
   const HomeTab({super.key});
 
   Future<void> _handleRefresh(BuildContext context, PrinterProvider provider) async {
+    await provider.checkServerAvailability();
     await provider.loadPrinterStatus();
     await provider.loadPrinterConfig();
     if (!context.mounted) return;
@@ -254,21 +256,55 @@ class HomeTab extends StatelessWidget {
                   borderRadius: BorderRadius.circular(UiConstants.borderRadiusMd),
                   border: Border.all(color: AppTheme.warningColor),
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(
-                      Icons.warning_amber_rounded,
-                      color: AppTheme.warningColor,
-                    ),
-                    const SizedBox(width: UiConstants.spacingSm),
-                    Expanded(
-                      child: Text(
-                        'Python backend tidak tersedia. Pastikan server berjalan di port 8000.',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.warning_amber_rounded,
                           color: AppTheme.warningColor,
                         ),
-                      ),
+                        const SizedBox(width: UiConstants.spacingSm),
+                        Expanded(
+                          child: Text(
+                            // Tampilkan alasan ASLI (exit code, stderr backend,
+                            // dst dari provider.errorMessage) -- BUKAN pesan
+                            // generik statis yang tidak menjelaskan apa-apa.
+                            provider.errorMessage ??
+                                'Python backend tidak tersedia. Pastikan server berjalan di port 8000.',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: AppTheme.warningColor,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+                    if (DesktopBackendService().isDesktop) ...[
+                      const SizedBox(height: UiConstants.spacingSm),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: provider.isLoading
+                              ? null
+                              : () async {
+                                  final ok = await provider.retryBackend();
+                                  if (!context.mounted) return;
+                                  if (ok) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Backend berhasil dijalankan ulang.'),
+                                        backgroundColor: AppTheme.successColor,
+                                      ),
+                                    );
+                                  }
+                                },
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('Coba Jalankan Ulang Backend'),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

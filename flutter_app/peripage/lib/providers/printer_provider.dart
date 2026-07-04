@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../data/models/printer_models.dart';
 import '../core/services/api_service.dart';
+import '../services/desktop_backend_service.dart';
 
 /// Provider untuk mengelola state printer dan operasi print
 class PrinterProvider with ChangeNotifier {
@@ -41,10 +42,35 @@ class PrinterProvider with ChangeNotifier {
       return true;
     } catch (e) {
       _serverAvailable = false;
-      _errorMessage = e.toString();
+      // Kalau di desktop, DesktopBackendService sudah nangkep exit code &
+      // stderr ASLI dari proses backend (lihat startBackend()) -- itu jauh
+      // lebih berguna daripada exception generik dari HTTP client
+      // ("Connection refused" doang tidak bilang APA yang sebenarnya gagal).
+      final backendError = DesktopBackendService().isDesktop
+          ? DesktopBackendService().lastError
+          : null;
+      _errorMessage = backendError ?? e.toString();
       notifyListeners();
       return false;
     }
+  }
+
+  /// Restart backend Python secara penuh (stop lalu start ulang), lalu cek
+  /// lagi ketersediaannya. Dipakai tombol "Coba Lagi" di banner UI supaya
+  /// user tidak perlu buka terminal/file manager sama sekali kalau backend
+  /// gagal auto-start.
+  Future<bool> retryBackend() async {
+    if (!DesktopBackendService().isDesktop) return checkServerAvailability();
+
+    _isLoading = true;
+    notifyListeners();
+
+    await DesktopBackendService().restartBackend();
+    final ok = await checkServerAvailability();
+
+    _isLoading = false;
+    notifyListeners();
+    return ok;
   }
 
   /// Load printer status

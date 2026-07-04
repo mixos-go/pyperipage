@@ -12,12 +12,19 @@ class DesktopBackendService {
   bool _isRunning = false;
   final String _host = '127.0.0.1';
   final int _port = 8000;
+  final StringBuffer _stderrBuffer = StringBuffer();
 
   /// Cek apakah platform mendukung desktop backend
   bool get isDesktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   /// Status backend
   bool get isRunning => _isRunning;
+
+  /// Pesan error TERAKHIR & SEBENARNYA dari proses backend (stderr, exit
+  /// code, dst) -- dipakai UI buat menampilkan alasan asli kalau auto-start
+  /// gagal, BUKAN pesan generik statis.
+  String? get lastError => _lastError;
+  String? _lastError;
 
   /// Mulai Python backend secara otomatis
   Future<bool> startBackend({String? executablePath}) async {
@@ -31,12 +38,23 @@ class DesktopBackendService {
       return true;
     }
 
+    _lastError = null;
+    _stderrBuffer.clear();
+
     try {
       // Tentukan path executable
       String backendPath = executablePath ?? _findBackendExecutable();
-      
+
       debugPrint('🚀 Starting backend dari: $backendPath');
-      
+
+      if (backendPath == 'python') {
+        // _findBackendExecutable() sudah print warning detail -- di sini
+        // cukup pastikan error itu juga sampai ke UI (bukan cuma console).
+        _lastError = 'Binary peripage-backend tidak ditemukan di folder aplikasi. '
+            'Pastikan file peripage-backend ada di folder yang sama dengan aplikasi utama.';
+        return false;
+      }
+
       // Jalankan proses
       _backendProcess = await Process.start(
         backendPath,
@@ -48,27 +66,70 @@ class DesktopBackendService {
         runInShell: true,
       );
 
-      // Listen output
-      _backendProcess!.stdout.transform(utf8.decoder).listen((data) {
+      final process = _backendProcess!;
+
+      // Listen output (juga dikumpulkan ke buffer buat ditampilkan ke UI
+      // kalau proses ternyata gagal start).
+      process.stdout.transform(utf8.decoder).listen((data) {
         debugPrint('🐍 [Backend] $data');
       });
-
-      _backendProcess!.stderr.transform(utf8.decoder).listen((data) {
+      process.stderr.transform(utf8.decoder).listen((data) {
         debugPrint('❌ [Backend Error] $data');
+        _stderrBuffer.write(data);
       });
 
-      // Tunggu sebentar untuk memastikan server siap
-      await Future.delayed(const Duration(seconds: 3));
-      
+      // Race antara: (a) proses keluar duluan sebelum port kebuka -> gagal,
+      // atau (b) port 8000 berhasil di-connect -> beneran jalan.
+      // GANTI dari `Future.delayed(3 detik)` lalu asumsi sukses tanpa
+      // verifikasi apa pun -- itu bikin app bilang "backend jalan" padahal
+      // proses-nya sudah crash duluan (misal .so hilang saat packaging).
+      final exitedEarly = process.exitCode.then((code) => _ExitedEarly(code));
+      final portReady = _waitForPort(timeout: const Duration(seconds: 10))
+          .then((ok) => ok ? _PortReady() : _PortReady(timedOut: true));
+
+      final result = await Future.any([exitedEarly, portReady]);
+
+      if (result is _ExitedEarly) {
+        _lastError = 'Proses backend keluar sendiri (exit code ${result.code}) sebelum '
+            'server siap.\n\nOutput error:\n${_stderrBuffer.toString().trim().isEmpty ? '(tidak ada output)' : _stderrBuffer.toString().trim()}';
+        debugPrint('❌ Backend exited early: ${result.code}');
+        _isRunning = false;
+        return false;
+      }
+
+      if (result is _PortReady && result.timedOut) {
+        _lastError = 'Backend tidak merespons di port $_port setelah 10 detik.\n\n'
+            'Output sejauh ini:\n${_stderrBuffer.toString().trim().isEmpty ? '(tidak ada output)' : _stderrBuffer.toString().trim()}';
+        debugPrint('❌ Backend timeout menunggu port $_port');
+        _isRunning = false;
+        return false;
+      }
+
       _isRunning = true;
       debugPrint('✅ Backend berhasil dijalankan di $_host:$_port');
-      
       return true;
     } catch (e) {
       debugPrint('❌ Gagal memulai backend: $e');
+      _lastError = 'Gagal menjalankan proses backend: $e';
       _isRunning = false;
       return false;
     }
+  }
+
+  /// Poll port TCP sampai kebuka (server FastAPI/uvicorn siap menerima
+  /// koneksi) atau timeout. Jauh lebih andal daripada nunggu waktu tetap.
+  Future<bool> _waitForPort({required Duration timeout}) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      try {
+        final socket = await Socket.connect(_host, _port, timeout: const Duration(milliseconds: 500));
+        await socket.close();
+        return true;
+      } catch (_) {
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+    }
+    return false;
   }
 
   /// Cari executable backend di berbagai lokasi.
@@ -140,6 +201,14 @@ class DesktopBackendService {
     }
   }
 
+  /// Restart backend -- dipakai tombol "Coba Lagi" di banner UI, supaya
+  /// user bisa retry START ULANG backend langsung dari dalam app, TANPA
+  /// perlu buka terminal atau file manager sama sekali.
+  Future<bool> restartBackend() async {
+    await stopBackend();
+    return startBackend();
+  }
+
   /// Dapatkan URL backend
   String get baseUrl => 'http://$_host:$_port';
 
@@ -147,4 +216,17 @@ class DesktopBackendService {
   Future<void> dispose() async {
     await stopBackend();
   }
+}
+
+/// Helper internal buat Future.any() di startBackend() -- proses backend
+/// keluar sendiri sebelum port kebuka (kemungkinan besar CRASH saat startup).
+class _ExitedEarly {
+  final int code;
+  _ExitedEarly(this.code);
+}
+
+/// Helper internal buat Future.any() di startBackend() -- hasil polling port.
+class _PortReady {
+  final bool timedOut;
+  _PortReady({this.timedOut = false});
 }
