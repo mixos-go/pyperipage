@@ -71,19 +71,37 @@ class DesktopBackendService {
     }
   }
 
-  /// Cari executable backend di berbagai lokasi
+  /// Cari executable backend di berbagai lokasi.
+  ///
+  /// FIX (Juli 2026): sebelumnya path yang dicoba semuanya relatif ke
+  /// Current Working Directory ('build/desktop/dist/...', atau nama file
+  /// polos) -- ini TIDAK RELIABLE karena CWD app desktop bisa apa saja
+  /// tergantung cara app dijalankan (double-click dari file manager,
+  /// shortcut, terminal di folder lain, dst), BUKAN selalu folder tempat
+  /// file .exe/binary utama berada. Makanya backend gagal ditemukan &
+  /// auto-start gagal di Linux (dan berpotensi juga Windows/macOS,
+  /// tergantung cara app dibuka).
+  ///
+  /// CI (build-multi-platform.yml) selalu meletakkan
+  /// peripage-backend(.exe) di folder YANG SAMA dengan executable utama:
+  /// - Windows: build/windows/x64/runner/Release/ (sama dengan peripage.exe)
+  /// - Linux:   build/linux/x64/release/bundle/   (sama dengan peripage)
+  /// - macOS:   .../peripage.app/Contents/MacOS/  (sama dengan peripage)
+  ///
+  /// Jadi path yang BENAR adalah relatif ke `Platform.resolvedExecutable`
+  /// (lokasi app yang SEDANG BERJALAN), bukan CWD.
   String _findBackendExecutable() {
     String exeName = Platform.isWindows ? 'peripage-backend.exe' : 'peripage-backend';
-    
-    // Coba berbagai lokasi
+
+    final executableDir = File(Platform.resolvedExecutable).parent.path;
+    final sameDir = '$executableDir${Platform.pathSeparator}$exeName';
+
     List<String> possiblePaths = [
-      // Relative dari working directory
+      sameDir, // prioritas utama -- sesuai lokasi CI meletakkan backend
+      // Fallback lama, dipertahankan buat kasus dev lokal yang jalanin
+      // `flutter run` langsung dari root project (CWD == root project).
       'build/desktop/dist/$exeName',
       '../build/desktop/dist/$exeName',
-      // Absolute dari bundle aplikasi
-      if (Platform.isMacOS)
-        '${Platform.resolvedExecutable}/../Resources/backend/$exeName',
-      // Current directory
       exeName,
     ];
 
@@ -93,6 +111,12 @@ class DesktopBackendService {
       }
     }
 
+    debugPrint(
+      '⚠️ Backend executable tidak ditemukan di path manapun (dicoba: $possiblePaths). '
+      'Fallback ke "python" -- ini HANYA akan berhasil kalau python & '
+      'desktop_main.py ada di PATH, yang biasanya TIDAK BENAR untuk build '
+      'rilis. Cek apakah CI benar-benar meng-copy $exeName ke $executableDir.',
+    );
     // Fallback: coba jalankan dengan python langsung
     return 'python'; // Akan dijalankan dengan script desktop_main.py
   }

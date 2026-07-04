@@ -15,7 +15,7 @@ from .protocol import (
     smart_crop_and_resize,
 )
 from .transport_usb import UsbTransport, TransportError as UsbTransportError
-from .transport_ble import BleTransportDefault as BleTransport, TransportError as BleTransportError
+from .transport_ble import BleTransport, TransportError as BleTransportError
 
 __version__ = "2.0.0"
 __all__ = [

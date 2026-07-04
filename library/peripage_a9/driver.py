@@ -1,17 +1,15 @@
 """
 peripage_a9/driver.py
 
-API PUBLIK class PeriPageA9USB TIDAK BERUBAH dari versi lama -- signature
-method, nilai balik, dan label log ([LIBRARY], [LIBRARY ERROR], dst) sama
-persis. Yang berubah cuma internalnya: byte protokol & transport USB sekarang
-didelegasikan ke peripage_protocol.py / transport_usb.py yang SAMA dipakai
-oleh aplikasi GUI di root project -- supaya kedua produk (package pip ini dan
-app GUI) tidak lagi punya dua salinan logic protokol yang bisa diam-diam beda.
+API PUBLIK class PeriPageA9USB dan PeriPageA9BLE.
+Logic protokol dan transport dipisah ke modul terpisah.
+Support USB (desktop) dan BLE (mobile) dengan interface yang sama.
 """
 import traceback
 
 from . import protocol
 from .transport_usb import UsbTransport
+from .transport_ble import BleTransportDefault as BleTransport
 
 
 class PeriPageA9USB:
@@ -85,4 +83,69 @@ class PeriPageA9USB:
             raise e
         finally:
             # SISTEM AUTO-RESET PORT UNTUK MENCEGAH MACET / RESOURCE BUSY
+            self._transport.close()
+
+
+class PeriPageA9BLE:
+    """
+    Library Driver BLE (Bluetooth Low Energy) untuk Printer Thermal PeriPage A9.
+    Interface sama dengan PeriPageA9USB untuk kemudahan penggunaan.
+    Cocok untuk mobile (Android/iOS) dan desktop dengan Bluetooth.
+    """
+
+    def __init__(self, device_address=None, paper_width_mm=None):
+        """
+        Args:
+            device_address: MAC address atau UUID device BLE (opsional).
+                           Jika None, akan auto-discovery berdasarkan nama.
+            paper_width_mm: Lebar kertas (58 atau 77mm). Default dari setting tersimpan.
+        """
+        self.device_address = device_address
+        self._transport = None
+        self.paper_width_mm = paper_width_mm if paper_width_mm else protocol.load_paper_width_mm()
+
+    def set_paper_width(self, paper_width_mm, persist=True):
+        """Ganti lebar kertas aktif (58 atau 77mm)."""
+        if paper_width_mm not in protocol.SUPPORTED_PAPER_WIDTHS_MM:
+            raise ValueError(
+                f"Lebar kertas {paper_width_mm}mm tidak didukung. "
+                f"Pilihan: {protocol.SUPPORTED_PAPER_WIDTHS_MM}"
+            )
+        self.paper_width_mm = paper_width_mm
+        if persist:
+            protocol.save_paper_width_mm(paper_width_mm, warning_tag="LIBRARY-BLE")
+
+    def smart_crop_and_resize(self, pil_img):
+        """Smart crop dan resize gambar sesuai lebar kertas aktif."""
+        return protocol.smart_crop_and_resize(pil_img, self.paper_width_mm, error_tag="LIBRARY-BLE")
+
+    def connect(self):
+        """Koneksi ke printer via BLE. Return True/False."""
+        self._transport = BleTransport(self.device_address)
+        try:
+            self._transport.connect()
+            print("[LIBRARY-BLE] Koneksi BLE berhasil.")
+            return True
+        except Exception as e:
+            print(f"\n[LIBRARY-BLE ERROR] Gagal koneksi BLE: {e}")
+            traceback.print_exc()
+            self._transport = None
+            return False
+
+    def print_pages(self, pages_to_print, cropped_images_dict):
+        """Kirim data print ke printer via BLE."""
+        if self._transport is None:
+            raise Exception("Printer belum terhubung. Panggil fungsi .connect() terlebih dahulu.")
+
+        try:
+            protocol.send_print_job(
+                self._transport, pages_to_print, cropped_images_dict, self.paper_width_mm,
+                progress_tag="LIBRARY-BLE", done_tag="LIBRARY-BLE",
+            )
+            print("[LIBRARY-BLE] Dokumen sukses dicetak via BLE!")
+        except Exception as e:
+            print("\n[LIBRARY-BLE ERROR] Kegagalan transmisi data BLE:")
+            traceback.print_exc()
+            raise e
+        finally:
             self._transport.close()

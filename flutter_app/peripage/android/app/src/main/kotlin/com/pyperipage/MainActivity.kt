@@ -38,7 +38,22 @@ class MainActivity: FlutterActivity() {
     // Semua panggilan ke Python sekarang dieksekusi di background thread ini,
     // hasilnya baru dikirim balik ke Dart lewat main thread (wajib untuk
     // MethodChannel.Result).
-    private val backgroundExecutor = Executors.newSingleThreadExecutor()
+    //
+    // PENTING (fix Juli 2026): thread baru dari Executors polos TIDAK otomatis
+    // mewarisi Context ClassLoader milik app. Chaquopy meresolusi
+    // `from com.pyperipage import ...` di Python lewat reflection Java yang
+    // baca Context ClassLoader thread yang berjalan -- kalau thread itu
+    // classloader-nya bootstrap/system (bukan classloader app), reflection
+    // gagal nemu package sendiri sama sekali, muncul sebagai
+    // "ModuleNotFoundError: No module named 'com'" di Python (gagal bahkan di
+    // segmen PALING AWAL, sebelum coba resolusi com.pyperipage.NativeUsbTransport).
+    // Makanya ThreadFactory di sini SENGAJA set contextClassLoader manual ke
+    // classloader Activity ini, bukan mengandalkan inheritance default.
+    private val backgroundExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "chaquopy-bg").apply {
+            contextClassLoader = this@MainActivity.classLoader
+        }
+    }
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

@@ -64,6 +64,19 @@ class ApiService {
     }
   }
 
+  Future<bool> disconnect() async {
+    if (_isMobile) {
+      await _invokeNative('disconnect');
+      return true;
+    }
+    final response = await http.post(Uri.parse('$baseUrl/api/disconnect'));
+    if (response.statusCode == 200) {
+      return true;
+    } else {
+      throw Exception('Failed to disconnect');
+    }
+  }
+
   Future<PrinterStatus> getPrinterStatus() async {
     if (_isMobile) {
       final data = await _invokeNative('getPrinterStatus');

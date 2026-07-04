@@ -199,6 +199,26 @@ async def connect_ble(request: Optional[BleConnectRequest] = None):
         raise HTTPException(status_code=400, detail="Gagal koneksi ke printer BLE")
 
 
+@app.post("/api/disconnect")
+async def disconnect():
+    """Putus koneksi printer aktif (USB atau BLE) & lepas resource transport.
+    Dipakai SettingsScreen (Flutter) -- mirroring disconnect_printer() di
+    python_service.py (jalur Android), supaya perilakunya konsisten lintas
+    platform."""
+    global printer_usb, printer_ble
+
+    active = printer_usb if current_transport == "usb" else printer_ble
+    if active is not None and getattr(active, "_transport", None) is not None:
+        try:
+            active._transport.close()
+        except Exception:
+            pass
+
+    printer_usb = None
+    printer_ble = None
+    return {"status": "success", "message": "Printer terputus."}
+
+
 @app.get("/api/ble/discover")
 async def discover_ble_devices(timeout: float = 5.0):
     """Scan dan temukan device BLE di sekitar."""

@@ -226,6 +226,26 @@ class PrinterProvider with ChangeNotifier {
     }
   }
 
+  /// Putus koneksi printer aktif (USB atau BLE).
+  Future<bool> disconnect() async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      await _apiService.disconnect();
+      _printerStatus = null;
+      _errorMessage = null;
+      return true;
+    } catch (e) {
+      _errorMessage = e.toString();
+      notifyListeners();
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   /// Clear error
   void clearError() {
     _errorMessage = null;
