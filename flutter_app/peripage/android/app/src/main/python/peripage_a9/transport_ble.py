@@ -29,19 +29,21 @@ class TransportError(Exception):
 class BleTransport:
     """
     Transport handler untuk PeriPage A9 via Bluetooth Low Energy.
-    
-    CATATAN: UUID service dan characteristic mungkin perlu disesuaikan
-    berdasarkan dokumentasi atau sniffing dari printer Peripage A9.
-    Nilai di bawah adalah placeholder umum untuk printer thermal BLE.
+
+    UUID di bawah dikonfirmasi lewat inspeksi manual GATT table pakai nRF Connect
+    langsung ke unit PeriPage_A9 fisik (Juli 2026), BUKAN placeholder generik.
+    Service ini dikenal sebagai "ISSC Transparent UART" -- dipakai juga di banyak
+    printer thermal BLE murah lain (cat-printer, Goojprt, dll), fungsinya
+    nge-tunnel byte mentah langsung ke MCU printer.
     """
-    
-    # UUID ini perlu dikonfirmasi dari dokumentasi Peripage A9 atau melalui BLE scanning
-    # Biasanya printer thermal BLE memiliki service UUID khusus untuk print data
-    SERVICE_UUID = "000018f0-0000-1000-8000-00805f9b34fb"  # Contoh: Print Service
-    CHARACTERISTIC_UUID = "00002af1-0000-1000-8000-00805f9b34fb"  # Contoh: Print Data Characteristic
-    
-    # Atau bisa juga menggunakan nama device untuk discovery
-    DEVICE_NAME = "PeriPage-A9"  # Nama BLE device yang akan dicari
+
+    SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455"          # ISSC Transparent UART service
+    CHARACTERISTIC_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3"    # RX (write dari app ke printer)
+    NOTIFY_UUID = "49535343-1e4d-4bd9-ba61-23c647249616"            # TX (notify dari printer ke app)
+
+    # Nama iklan BLE printer ini "PeriPage_A9_BLE" (dari characteristic Device Name 0x2A00),
+    # tapi header koneksi nRF Connect nunjukin "PERIPAGE_A9" -- cocokkan keduanya biar aman.
+    DEVICE_NAME = "PeriPage_A9"
     
     def __init__(self, device_address: Optional[str] = None):
         """
@@ -132,7 +134,7 @@ class BleTransport:
             await self.client.connect(timeout=timeout)
             
             if not self.client.is_connected:
-                raise TransportError("Gagal建立 koneksi BLE.")
+                raise TransportError("Gagal membangun koneksi BLE.")
             
             # Verify service dan characteristic tersedia
             services = self.client.services

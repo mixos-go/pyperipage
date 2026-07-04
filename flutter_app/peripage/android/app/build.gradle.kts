@@ -49,8 +49,13 @@ chaquopy {
             install("pyusb")
             install("bleak")
             install("pillow")
-            install("pypdf2")
-            install("reportlab")
+            // pypdf2 & reportlab DIHAPUS: keduanya tidak bisa merender halaman PDF
+            // jadi gambar (cuma manipulasi struktur PDF / generate PDF baru).
+            // Yang dibutuhkan print_pdf() di python_service.py adalah rasterisasi
+            // PDF->gambar, makanya dipakai pymupdf (fitz) -- pure wheel, tanpa
+            // dependency binary eksternal seperti poppler yang dipakai pdf2image
+            // di app desktop (dan tidak tersedia di Android).
+            install("pymupdf")
         }
     }
 
