@@ -128,32 +128,17 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Visual Studio Build Tools (Required for CMake)
-        uses: microsoft/setup-msbuild@v2
-        with:
-          vs-version: '[17.0,18.0)'
-          msbuild-architecture: x64
-
-      - name: Install Ninja Build
-        run: choco install ninja --no-progress -y
-
-      - name: Configure Windows build generator
-        shell: pwsh
-        run: |
-          echo "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
-          echo "CMAKE_GENERATOR_PLATFORM=x64" >> $env:GITHUB_ENV
-
       - name: Install PyInstaller & Dependencies
         run: pip install pyinstaller fastapi uvicorn pillow pyusb bleak
 
       - name: Build Python Backend
         run: |
           cd core_python
-          pyinstaller --onefile --name=peripage_backend desktop_main.py
+          pyinstaller --onefile --name=peripage-backend desktop_main.py
           mkdir -p ../flutter_app/peripage/windows/runner/python_dist
-          cp dist/peripage_backend.exe ../flutter_app/peripage/windows/runner/python_dist/
+          cp dist/peripage-backend.exe ../flutter_app/peripage/windows/runner/python_dist/
 
-      - name: Build Windows EXE with Ninja
+      - name: Build Windows EXE
         run: |
           cd flutter_app/peripage
           flutter config --enable-windows-desktop
@@ -161,8 +146,8 @@ jobs:
           
       - name: Copy Backend to Build Directory
         run: |
-          $backendPath = "flutter_app/peripage/windows/runner/python_dist/peripage_backend.exe"
-          $destPath = "flutter_app/peripage/build/windows/x64/runner/Release/peripage_backend.exe"
+          $backendPath = "flutter_app/peripage/windows/runner/python_dist/peripage-backend.exe"
+          $destPath = "flutter_app/peripage/build/windows/x64/runner/Release/peripage-backend.exe"
           if (Test-Path $backendPath) {
             New-Item -ItemType Directory -Force -Path (Split-Path $destPath) | Out-Null
             Copy-Item $backendPath $destPath -Force
@@ -171,17 +156,11 @@ jobs:
             Write-Host "Backend not found, skipping copy"
           }
 
-      - name: Create Windows Distribution
-        run: |
-          New-Item -ItemType Directory -Force -Path "flutter_app/build_outputs/windows" | Out-Null
-          cd flutter_app/peripage/build/windows/x64/runner/Release
-          Compress-Archive -Path * -DestinationPath ../../../../../build_outputs/windows/peripage-windows-${{ needs.setup.outputs.version }}.zip -Force
-
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-exe-${{ needs.setup.outputs.version }}
-          path: flutter_app/build_outputs/windows/*.zip
+          path: flutter_app/peripage/build/windows/x64/runner/Release
           retention-days: 7
 
   build-macos:
@@ -209,27 +188,22 @@ jobs:
       - name: Build Python Backend
         run: |
           cd core_python
-          pyinstaller --onefile --name=peripage_backend desktop_main.py
+          pyinstaller --onefile --name=peripage-backend desktop_main.py
           mkdir -p ../flutter_app/peripage/macos/Runner/python_dist
-          cp dist/peripage_backend ../flutter_app/peripage/macos/Runner/python_dist/
+          cp dist/peripage-backend ../flutter_app/peripage/macos/Runner/python_dist/
 
       - name: Build macOS App
         run: |
           cd flutter_app/peripage
           flutter config --enable-macos-desktop
           flutter build macos --release
-          cp macos/Runner/python_dist/peripage_backend build/macos/Build/Products/Release/peripage.app/Contents/MacOS/ || echo "Backend copied"
-
-      - name: Create DMG
-        run: |
-          cd flutter_app/peripage/build/macos/Build/Products/Release
-          hdiutil create -volname "PeriPage" -srcfolder peripage.app -ov -format UDZO ../../../../build_outputs/macos/peripage-macos-${{ needs.setup.outputs.version }}.dmg
+          cp macos/Runner/python_dist/peripage-backend build/macos/Build/Products/Release/peripage.app/Contents/MacOS/ || echo "Backend copied"
 
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-dmg-${{ needs.setup.outputs.version }}
-          path: flutter_app/build_outputs/macos/*.dmg
+          name: macos-app-${{ needs.setup.outputs.version }}
+          path: flutter_app/peripage/build/macos/Build/Products/Release/peripage.app
           retention-days: 7
 
   build-linux:
@@ -260,26 +234,20 @@ jobs:
       - name: Build Python Backend
         run: |
           cd core_python
-          pyinstaller --onefile --name=peripage_backend desktop_main.py
+          pyinstaller --onefile --name=peripage-backend desktop_main.py
           mkdir -p ../flutter_app/peripage/linux/python_dist
-          cp dist/peripage_backend ../flutter_app/peripage/linux/python_dist/
+          cp dist/peripage-backend ../flutter_app/peripage/linux/python_dist/
 
       - name: Build Linux App
         run: |
           cd flutter_app/peripage
           flutter config --enable-linux-desktop
           flutter build linux --release
-          cp linux/python_dist/peripage_backend build/linux/x64/release/bundle/ || echo "Backend copied"
-
-      - name: Create Tarball
-        run: |
-          mkdir -p flutter_app/build_outputs/linux
-          cd flutter_app/peripage/build/linux/x64/release/bundle
-          tar -czf ../../../../../build_outputs/linux/peripage-linux-${{ needs.setup.outputs.version }}.tar.gz *
+          cp linux/python_dist/peripage-backend build/linux/x64/release/bundle/ || echo "Backend copied"
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-app-${{ needs.setup.outputs.version }}
-          path: flutter_app/build_outputs/linux/*.tar.gz
+          path: flutter_app/peripage/build/linux/x64/release/bundle
           retention-days: 7
