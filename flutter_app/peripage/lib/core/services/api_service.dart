@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:pdfx/pdfx.dart';
 import '../utils/constants.dart';
 import '../../data/models/printer_models.dart';
 
@@ -239,10 +242,55 @@ class ApiService {
     }
   }
 
+  /// Render halaman-halaman PDF yang diminta jadi file gambar PNG lokal,
+  /// dipakai HANYA untuk jalur mobile (Chaquopy tidak bisa pasang PyMuPDF).
+  /// Skala render disamakan dengan implementasi lama (zoom 3.0 dari fitz,
+  /// ~216 DPI) supaya kualitas cetak thermal tetap sama.
+  Future<List<String>> _renderPdfPagesToImages(File pdfFile, List<int> pages) async {
+    final document = await PdfDocument.openFile(pdfFile.path);
+    final tempDir = await getTemporaryDirectory();
+    final imagePaths = <String>[];
+    try {
+      for (final pageIndex in pages) {
+        // pdfx pakai penomoran halaman mulai dari 1, `pages` di kontrak
+        // ApiService ini 0-indexed (konsisten dengan implementasi fitz lama).
+        final page = await document.getPage(pageIndex + 1);
+        try {
+          final rendered = await page.render(
+            width: page.width * 3,
+            height: page.height * 3,
+            format: PdfPageImageFormat.png,
+          );
+          if (rendered == null) {
+            throw Exception('Gagal render halaman PDF ke-${pageIndex + 1}.');
+          }
+          final outPath = p.join(
+            tempDir.path,
+            'pdf_page_${pageIndex}_${DateTime.now().microsecondsSinceEpoch}.png',
+          );
+          final outFile = File(outPath);
+          await outFile.writeAsBytes(rendered.bytes);
+          imagePaths.add(outPath);
+        } finally {
+          await page.close();
+        }
+      }
+    } finally {
+      await document.close();
+    }
+    return imagePaths;
+  }
+
   Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm}) async {
     if (_isMobile) {
-      await _invokeNative('printPdf', {
-        'pdfPath': pdfFile.path,
+      // Rasterisasi PDF->gambar di Dart (pdfx/PDFium) dulu, karena
+      // python_service.py di Android tidak bisa pasang PyMuPDF (fitz) --
+      // Chaquopy tidak punya wheel untuk itu. Hasil render (satu gambar per
+      // halaman) dikirim ke native lewat channel `printPdfPages`, sinkron
+      // index-ke-index dengan `pages`.
+      final imagePaths = await _renderPdfPagesToImages(pdfFile, pages);
+      await _invokeNative('printPdfPages', {
+        'imagePaths': imagePaths,
         'pages': pages,
         'paperWidthMm': paperWidthMm,
       });

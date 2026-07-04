@@ -49,13 +49,20 @@ chaquopy {
             install("pyusb")
             install("bleak")
             install("pillow")
-            // pypdf2 & reportlab DIHAPUS: keduanya tidak bisa merender halaman PDF
-            // jadi gambar (cuma manipulasi struktur PDF / generate PDF baru).
-            // Yang dibutuhkan print_pdf() di python_service.py adalah rasterisasi
-            // PDF->gambar, makanya dipakai pymupdf (fitz) -- pure wheel, tanpa
-            // dependency binary eksternal seperti poppler yang dipakai pdf2image
-            // di app desktop (dan tidak tersedia di Android).
-            install("pymupdf")
+            // pypdf2, reportlab, & pymupdf DIHAPUS dari build Android:
+            // - pypdf2/reportlab tidak bisa rasterisasi PDF->gambar.
+            // - pymupdf (fitz) TIDAK PUNYA wheel prebuilt untuk Android di
+            //   index Chaquopy (chaquo.com/pypi-13.1), dan tidak bisa
+            //   dikompilasi dari source di Android (butuh toolchain native
+            //   C/C++ untuk build MuPDF, yang tidak tersedia di Chaquopy env
+            //   -- CXX di-set ke 'Chaquopy_cannot_compile_native_code').
+            //   Rasterisasi PDF->gambar untuk fitur print_pdf() di Android
+            //   HARUS dipindah ke sisi Dart (pakai package `pdfx` atau
+            //   `printing`), lalu kirim path/bytes gambar hasil render ke
+            //   python_service.py -- bukan path PDF mentah.
+            //   Di desktop (Windows/Linux/macOS), pymupdf tetap dipasang
+            //   normal lewat pip biasa di core_python/requirements
+            //   (PyInstaller build), jadi tidak terpengaruh perubahan ini.
         }
     }
 

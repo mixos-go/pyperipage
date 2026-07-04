@@ -80,11 +80,14 @@ class MainActivity: FlutterActivity() {
                     handlePythonCall("print_image", result, imagePath, paperWidthMm)
                 }
 
-                "printPdf" -> {
-                    val pdfPath = call.argument<String>("pdfPath")
+                "printPdfPages" -> {
+                    // Ganti dari "printPdf" (Juli 2026): PDF sekarang dirender jadi
+                    // gambar di sisi Dart (pdfx) dulu, karena Chaquopy tidak bisa
+                    // pasang fitz/pymupdf. imagePaths[i] adalah hasil render pages[i].
+                    val imagePaths = call.argument<List<String>>("imagePaths") ?: listOf()
                     val pages = call.argument<List<Int>>("pages") ?: listOf()
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
-                    handlePythonCall("print_pdf", result, pdfPath, pages, paperWidthMm)
+                    handlePythonCall("print_pdf_pages", result, imagePaths, pages, paperWidthMm)
                 }
 
                 "printBatch" -> {

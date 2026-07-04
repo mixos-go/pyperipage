@@ -14,8 +14,10 @@ Perbaikan dari versi sebelumnya:
   kita HANYA mendukung cetak gambar (smart_crop_and_resize + print_pages),
   tidak ada mode teks langsung atau perintah potong kertas terpisah di
   protocol.py manapun (USB maupun BLE).
-- print_pdf sekarang benar-benar merender halaman PDF jadi gambar pakai
-  PyMuPDF (fitz), BUKAN base64 pass-through kosong seperti sebelumnya.
+- print_pdf_pages (sebelumnya print_pdf) sekarang menerima gambar hasil
+  render halaman PDF dari Dart (package `pdfx`), BUKAN merender PDF sendiri
+  pakai PyMuPDF (fitz tidak bisa dipasang di Chaquopy Android) atau base64
+  pass-through kosong seperti versi-versi sebelumnya.
 """
 import base64
 import io
@@ -145,48 +147,39 @@ def print_image(image_path: str, paper_width_mm: int = None) -> dict:
         return _err(e)
 
 
-def print_pdf(pdf_path: str, pages: list, paper_width_mm: int = None) -> dict:
+def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None) -> dict:
     """
-    Dipakai ApiService.printPdf(File, List<int> pages).
+    Dipakai ApiService.printPdf(File, List<int> pages) di Android/iOS.
 
-    CATATAN PENTING: app desktop asli pakai pdf2image (butuh binary poppler),
-    yang TIDAK TERSEDIA di Android. Di sini dipakai PyMuPDF (fitz) untuk
-    rasterisasi halaman PDF jadi gambar -- pure Python wheel, tidak butuh
-    binary sistem eksternal.
+    GANTI ARSITEKTUR (Juli 2026): sebelumnya fungsi ini bernama print_pdf()
+    dan menerima path PDF mentah, lalu merender halamannya jadi gambar di
+    sini pakai PyMuPDF (fitz). Itu TIDAK BISA jalan karena fitz tidak punya
+    wheel untuk Android di Chaquopy, dan tidak bisa dikompilasi dari source
+    di Android (butuh toolchain native C/C++ buat build MuPDF).
 
-    BELUM DIVALIDASI di device Android fisik apakah wheel `pymupdf` untuk
-    arch arm64-v8a/x86_64 berhasil ditarik Chaquopy saat build -- ini perlu
-    dites langsung sebelum dianggap beres. Kalau gagal, alternatif fallback:
-    render PDF->gambar di sisi Dart pakai package `pdfx` / `printing`
-    sebelum kirim path gambar ke sini (bukan path PDF).
+    Sekarang rasterisasi PDF->gambar dipindah ke sisi Dart (package `pdfx`,
+    berbasis PDFium) SEBELUM data dikirim ke sini -- jadi fungsi ini cuma
+    terima path gambar hasil render (satu file per halaman), persis seperti
+    print_batch(), tapi indeks halamannya (`pages`) tetap dijaga sinkron
+    dengan urutan asli di dokumen PDF (bukan cuma 0..N sekuensial).
+
+    image_paths dan pages HARUS punya panjang yang sama & berpasangan index
+    ke index -- image_paths[i] adalah hasil render dari pages[i].
     """
     global _driver
     if _driver is None:
         return {"status": "error", "message": "Printer belum terhubung."}
-    try:
-        import fitz  # PyMuPDF
-    except ImportError as e:
-        return _err(Exception(
-            "PyMuPDF (fitz) tidak tersedia di runtime Android ini. "
-            f"Detail: {e}"
-        ))
-
+    if len(image_paths) != len(pages):
+        return {"status": "error", "message": "image_paths dan pages harus punya panjang sama."}
     try:
         if paper_width_mm:
             _driver.set_paper_width(paper_width_mm)
 
-        doc = fitz.open(pdf_path)
         cropped_images = {}
-        zoom = 3.0  # ~216 DPI, cukup buat thermal print resolution
-        mat = fitz.Matrix(zoom, zoom)
+        for page_idx, img_path in zip(pages, image_paths):
+            img = Image.open(img_path)
+            cropped_images[page_idx] = _driver.smart_crop_and_resize(img)
 
-        for idx in pages:
-            page = doc.load_page(idx)
-            pix = page.get_pixmap(matrix=mat)
-            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            cropped_images[idx] = _driver.smart_crop_and_resize(img)
-
-        doc.close()
         _driver.print_pages(pages, cropped_images)
         return {"status": "ok"}
     except Exception as e:

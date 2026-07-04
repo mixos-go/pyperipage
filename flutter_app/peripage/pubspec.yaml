@@ -22,8 +22,15 @@ dependencies:
   # File Picker untuk select PDF
   file_picker: ^8.2.1
   
+  # PDF rasterisasi (Android/iOS) -- pengganti pdf2image+poppler yang cuma
+  # jalan di desktop. Dipakai ApiService.printPdf() buat render halaman PDF
+  # jadi gambar SEBELUM dikirim ke python_service.py (yang cuma terima
+  # gambar, bukan PDF mentah -- pymupdf tidak bisa dipasang di Chaquopy).
+  pdfx: ^2.6.0
+  
   # Path Provider untuk akses file system
   path_provider: ^2.1.2
+  path: ^1.9.0
   
   # Permission Handler untuk request permissions
   permission_handler: ^11.3.0
@@ -47,7 +54,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  
+
   assets:
     - assets/images/
     - assets/icons/
