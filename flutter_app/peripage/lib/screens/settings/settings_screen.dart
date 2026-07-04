@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../providers/printer_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/constants.dart';
+import '../logs/log_viewer_screen.dart';
 
 /// Settings Screen - Pengaturan printer & informasi aplikasi.
 ///
@@ -129,6 +130,41 @@ class SettingsScreen extends StatelessWidget {
                       padding: EdgeInsets.symmetric(vertical: UiConstants.spacingSm),
                       child: Text('Memuat konfigurasi...'),
                     ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: UiConstants.spacingMd),
+
+          // Log Aplikasi -- lihat & export semua log sesi (koneksi, error
+          // native call, backend desktop, dll) TANPA perlu adb logcat.
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(UiConstants.spacingLg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Log Aplikasi', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: UiConstants.spacingXs),
+                  Text(
+                    'Untuk keperluan debugging -- lihat & export log sesi ini kalau ada masalah.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: UiConstants.spacingMd),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const LogViewerScreen()),
+                        );
+                      },
+                      icon: const Icon(Icons.article_outlined),
+                      label: const Text('Lihat Log'),
+                    ),
+                  ),
                 ],
               ),
             ),

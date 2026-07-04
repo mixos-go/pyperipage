@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import '../core/utils/app_logger.dart';
 
 /// Service untuk menjalankan Python backend secara otomatis di Desktop
 class DesktopBackendService {
@@ -29,12 +29,12 @@ class DesktopBackendService {
   /// Mulai Python backend secara otomatis
   Future<bool> startBackend({String? executablePath}) async {
     if (!isDesktop) {
-      debugPrint('❌ DesktopBackendService hanya untuk platform desktop');
+      appLog('Backend', '❌ DesktopBackendService hanya untuk platform desktop');
       return false;
     }
 
     if (_isRunning) {
-      debugPrint('✅ Backend sudah berjalan');
+      appLog('Backend', '✅ Backend sudah berjalan');
       return true;
     }
 
@@ -45,7 +45,7 @@ class DesktopBackendService {
       // Tentukan path executable
       String backendPath = executablePath ?? _findBackendExecutable();
 
-      debugPrint('🚀 Starting backend dari: $backendPath');
+      appLog('Backend', '🚀 Starting backend dari: $backendPath');
 
       if (backendPath == 'python') {
         // _findBackendExecutable() sudah print warning detail -- di sini
@@ -71,10 +71,10 @@ class DesktopBackendService {
       // Listen output (juga dikumpulkan ke buffer buat ditampilkan ke UI
       // kalau proses ternyata gagal start).
       process.stdout.transform(utf8.decoder).listen((data) {
-        debugPrint('🐍 [Backend] $data');
+        appLog('Backend', '🐍 [Backend] $data');
       });
       process.stderr.transform(utf8.decoder).listen((data) {
-        debugPrint('❌ [Backend Error] $data');
+        appLog('Backend', '❌ [Backend Error] $data');
         _stderrBuffer.write(data);
       });
 
@@ -92,7 +92,7 @@ class DesktopBackendService {
       if (result is _ExitedEarly) {
         _lastError = 'Proses backend keluar sendiri (exit code ${result.code}) sebelum '
             'server siap.\n\nOutput error:\n${_stderrBuffer.toString().trim().isEmpty ? '(tidak ada output)' : _stderrBuffer.toString().trim()}';
-        debugPrint('❌ Backend exited early: ${result.code}');
+        appLog('Backend', '❌ Backend exited early: ${result.code}');
         _isRunning = false;
         return false;
       }
@@ -100,16 +100,16 @@ class DesktopBackendService {
       if (result is _PortReady && result.timedOut) {
         _lastError = 'Backend tidak merespons di port $_port setelah 10 detik.\n\n'
             'Output sejauh ini:\n${_stderrBuffer.toString().trim().isEmpty ? '(tidak ada output)' : _stderrBuffer.toString().trim()}';
-        debugPrint('❌ Backend timeout menunggu port $_port');
+        appLog('Backend', '❌ Backend timeout menunggu port $_port');
         _isRunning = false;
         return false;
       }
 
       _isRunning = true;
-      debugPrint('✅ Backend berhasil dijalankan di $_host:$_port');
+      appLog('Backend', '✅ Backend berhasil dijalankan di $_host:$_port');
       return true;
     } catch (e) {
-      debugPrint('❌ Gagal memulai backend: $e');
+      appLog('Backend', '❌ Gagal memulai backend: $e');
       _lastError = 'Gagal menjalankan proses backend: $e';
       _isRunning = false;
       return false;
@@ -172,7 +172,7 @@ class DesktopBackendService {
       }
     }
 
-    debugPrint(
+    appLog('Backend', 
       '⚠️ Backend executable tidak ditemukan di path manapun (dicoba: $possiblePaths). '
       'Fallback ke "python" -- ini HANYA akan berhasil kalau python & '
       'desktop_main.py ada di PATH, yang biasanya TIDAK BENAR untuk build '
@@ -185,7 +185,7 @@ class DesktopBackendService {
   /// Stop backend
   Future<void> stopBackend() async {
     if (_backendProcess != null) {
-      debugPrint('🛑 Stopping backend...');
+      appLog('Backend', '🛑 Stopping backend...');
       
       if (Platform.isWindows) {
         // Windows: kill process tree
@@ -197,7 +197,7 @@ class DesktopBackendService {
       
       _backendProcess = null;
       _isRunning = false;
-      debugPrint('✅ Backend stopped');
+      appLog('Backend', '✅ Backend stopped');
     }
   }
 

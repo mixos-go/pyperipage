@@ -16,6 +16,7 @@ class PrinterProvider with ChangeNotifier {
   PrinterConfig? _printerConfig;
   bool _isLoading = false;
   String? _errorMessage;
+  String? _errorDetails;
   List<BleDevice> _bleDevices = [];
   File? _selectedFile;
   List<File> _selectedFiles = [];
@@ -25,6 +26,9 @@ class PrinterProvider with ChangeNotifier {
   PrinterConfig? get printerConfig => _printerConfig;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  /// Stack trace lengkap dari Kotlin/Chaquopy (kalau ada) -- dipakai dialog
+  /// "Lihat Detail" di UI supaya bisa debug tanpa adb logcat sama sekali.
+  String? get errorDetails => _errorDetails;
   List<BleDevice> get bleDevices => _bleDevices;
   File? get selectedFile => _selectedFile;
   List<File> get selectedFiles => _selectedFiles;
@@ -32,6 +36,20 @@ class PrinterProvider with ChangeNotifier {
   bool get isServerAvailable => _serverAvailable;
   ApiService get apiService => _apiService;
   bool _serverAvailable = false;
+
+  /// Set pesan error dari exception apa pun secara konsisten -- kalau
+  /// exception-nya NativeCallException (dari panggilan MethodChannel),
+  /// simpan juga `details` (stack trace lengkap) buat ditampilkan di
+  /// dialog "Lihat Detail" pada UI.
+  void _setError(Object e) {
+    if (e is NativeCallException) {
+      _errorMessage = e.message;
+      _errorDetails = e.details;
+    } else {
+      _errorMessage = e.toString();
+      _errorDetails = null;
+    }
+  }
 
   /// Check if server is available
   Future<bool> checkServerAvailability() async {
@@ -49,7 +67,12 @@ class PrinterProvider with ChangeNotifier {
       final backendError = DesktopBackendService().isDesktop
           ? DesktopBackendService().lastError
           : null;
-      _errorMessage = backendError ?? e.toString();
+      if (backendError != null) {
+        _errorMessage = backendError;
+        _errorDetails = null;
+      } else {
+        _setError(e);
+      }
       notifyListeners();
       return false;
     }
@@ -81,8 +104,9 @@ class PrinterProvider with ChangeNotifier {
     try {
       _printerStatus = await _apiService.getPrinterStatus();
       _errorMessage = null;
+      _errorDetails = null;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -97,8 +121,9 @@ class PrinterProvider with ChangeNotifier {
     try {
       _printerConfig = await _apiService.getConfig();
       _errorMessage = null;
+      _errorDetails = null;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -114,9 +139,10 @@ class PrinterProvider with ChangeNotifier {
       await _apiService.connectUsb();
       await loadPrinterStatus();
       _errorMessage = null;
+      _errorDetails = null;
       return true;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
       notifyListeners();
       return false;
     } finally {
@@ -133,9 +159,10 @@ class PrinterProvider with ChangeNotifier {
       await _apiService.connectBle(deviceAddress: deviceAddress);
       await loadPrinterStatus();
       _errorMessage = null;
+      _errorDetails = null;
       return true;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
       notifyListeners();
       return false;
     } finally {
@@ -151,8 +178,9 @@ class PrinterProvider with ChangeNotifier {
     try {
       _bleDevices = await _apiService.discoverBleDevices();
       _errorMessage = null;
+      _errorDetails = null;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
       _bleDevices = [];
     } finally {
       _isLoading = false;
@@ -169,9 +197,10 @@ class PrinterProvider with ChangeNotifier {
       await _apiService.setPaperWidth(widthMm);
       await loadPrinterConfig();
       _errorMessage = null;
+      _errorDetails = null;
       return true;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
       notifyListeners();
       return false;
     } finally {
@@ -206,9 +235,10 @@ class PrinterProvider with ChangeNotifier {
     try {
       await _apiService.printImage(imageFile, paperWidthMm: paperWidthMm);
       _errorMessage = null;
+      _errorDetails = null;
       return true;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
       notifyListeners();
       return false;
     } finally {
@@ -224,9 +254,10 @@ class PrinterProvider with ChangeNotifier {
     try {
       await _apiService.printPdf(pdfFile, pages, paperWidthMm: paperWidthMm);
       _errorMessage = null;
+      _errorDetails = null;
       return true;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
       notifyListeners();
       return false;
     } finally {
@@ -242,9 +273,10 @@ class PrinterProvider with ChangeNotifier {
     try {
       await _apiService.printBatch(files, paperWidthMm: paperWidthMm);
       _errorMessage = null;
+      _errorDetails = null;
       return true;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
       notifyListeners();
       return false;
     } finally {
@@ -261,9 +293,10 @@ class PrinterProvider with ChangeNotifier {
       await _apiService.disconnect();
       _printerStatus = null;
       _errorMessage = null;
+      _errorDetails = null;
       return true;
     } catch (e) {
-      _errorMessage = e.toString();
+      _setError(e);
       notifyListeners();
       return false;
     } finally {
@@ -275,6 +308,7 @@ class PrinterProvider with ChangeNotifier {
   /// Clear error
   void clearError() {
     _errorMessage = null;
+    _errorDetails = null;
     notifyListeners();
   }
 }

@@ -81,7 +81,7 @@ class HomeTab extends StatelessWidget {
     await provider.loadPrinterConfig();
     if (!context.mounted) return;
     if (provider.errorMessage != null) {
-      _showSnackBar(context, provider.errorMessage!, isError: true);
+      _showSnackBar(context, provider.errorMessage!, isError: true, details: provider.errorDetails);
     }
   }
 
@@ -91,7 +91,7 @@ class HomeTab extends StatelessWidget {
     if (success) {
       _showSnackBar(context, 'Terhubung ke printer via USB.');
     } else {
-      _showSnackBar(context, provider.errorMessage ?? 'Gagal terhubung via USB.', isError: true);
+      _showSnackBar(context, provider.errorMessage ?? 'Gagal terhubung via USB.', isError: true, details: provider.errorDetails);
     }
   }
 
@@ -99,7 +99,7 @@ class HomeTab extends StatelessWidget {
     await provider.discoverBleDevices();
     if (!context.mounted) return;
     if (provider.errorMessage != null) {
-      _showSnackBar(context, provider.errorMessage!, isError: true);
+      _showSnackBar(context, provider.errorMessage!, isError: true, details: provider.errorDetails);
       return;
     }
     if (provider.bleDevices.isEmpty) {
@@ -139,6 +139,7 @@ class HomeTab extends StatelessWidget {
                         context,
                         provider.errorMessage ?? 'Gagal terhubung ke ${device.name}.',
                         isError: true,
+                        details: provider.errorDetails,
                       );
                     }
                   },
@@ -150,11 +151,36 @@ class HomeTab extends StatelessWidget {
     );
   }
 
-  void _showSnackBar(BuildContext context, String message, {bool isError = false}) {
+  void _showSnackBar(BuildContext context, String message, {bool isError = false, String? details}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: isError ? AppTheme.errorColor : AppTheme.successColor,
+        action: (isError && details != null && details.isNotEmpty)
+            ? SnackBarAction(
+                label: 'Lihat Detail',
+                textColor: Colors.white,
+                onPressed: () => _showErrorDetailDialog(context, message, details),
+              )
+            : null,
+      ),
+    );
+  }
+
+  void _showErrorDetailDialog(BuildContext context, String message, String details) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Detail Error'),
+        content: SingleChildScrollView(
+          child: SelectableText('$message\n\n$details'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Tutup'),
+          ),
+        ],
       ),
     );
   }

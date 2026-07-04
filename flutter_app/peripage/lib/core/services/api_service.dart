@@ -1,12 +1,28 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
+import '../utils/app_logger.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
 import '../utils/constants.dart';
 import '../../data/models/printer_models.dart';
+
+/// Exception khusus buat panggilan native (MethodChannel) yang membawa
+/// `details` (stack trace lengkap dari Kotlin/Chaquopy) TERPISAH dari
+/// `message` (ringkas, buat SnackBar) -- supaya user bisa lihat traceback
+/// PERSIS di dalam app (lewat dialog "Lihat Detail") tanpa perlu adb logcat
+/// sama sekali.
+class NativeCallException implements Exception {
+  final String message;
+  final String? details;
+
+  NativeCallException(this.message, {this.details});
+
+  @override
+  String toString() => message;
+}
 
 /// Service untuk komunikasi dengan Python backend.
 ///
@@ -42,7 +58,17 @@ class ApiService {
       }
       return data;
     } on PlatformException catch (e) {
-      throw Exception(e.message ?? 'Gagal berkomunikasi dengan modul printer native.');
+      // `e.details` berisi stackTraceToString() lengkap dari Kotlin (lihat
+      // MainActivity.handlePythonCall) -- SEBELUMNYA dibuang total di sini,
+      // padahal itu satu-satunya cara lihat traceback Python asli tanpa
+      // adb logcat. Sekarang di-log penuh (kelihatan lewat `adb logcat`,
+      // tag flutter, bahkan di APK release) supaya debugging tidak buta.
+      appLog('ApiService', '❌ PlatformException di method "$method": ${e.message}');
+      appLog('ApiService', '❌ Detail lengkap (dari Kotlin/Chaquopy):\n${e.details}');
+      throw NativeCallException(
+        e.message ?? 'Gagal berkomunikasi dengan modul printer native.',
+        details: e.details?.toString(),
+      );
     }
   }
 
