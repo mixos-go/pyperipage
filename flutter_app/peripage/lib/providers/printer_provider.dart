@@ -3,13 +3,38 @@ import 'package:flutter/foundation.dart';
 import '../data/models/printer_models.dart';
 import '../core/services/api_service.dart';
 import '../services/desktop_backend_service.dart';
+import '../core/services/recent_files_service.dart';
 
 /// Provider untuk mengelola state printer dan operasi print
 class PrinterProvider with ChangeNotifier {
   final ApiService _apiService;
   
   PrinterProvider({ApiService? apiService}) 
-      : _apiService = apiService ?? ApiService();
+      : _apiService = apiService ?? ApiService() {
+    _loadRecentFiles();
+  }
+
+  final RecentFilesService _recentFilesService = RecentFilesService();
+  List<RecentFile> _recentFiles = [];
+  List<RecentFile> get recentFiles => _recentFiles;
+
+  Future<void> _loadRecentFiles() async {
+    _recentFiles = await _recentFilesService.load();
+    notifyListeners();
+  }
+
+  /// Catat file yang baru selesai di-print ke daftar Recent Files (Workspace).
+  Future<void> recordRecentFile({required String path, required String name, required String type}) async {
+    final entry = RecentFile(path: path, name: name, type: type, printedAt: DateTime.now());
+    await _recentFilesService.add(entry);
+    await _loadRecentFiles();
+  }
+
+  Future<void> clearRecentFiles() async {
+    await _recentFilesService.clear();
+    _recentFiles = [];
+    notifyListeners();
+  }
 
   // State variables
   PrinterStatus? _printerStatus;
@@ -151,12 +176,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Connect via BLE
-  Future<bool> connectBle({String? deviceAddress}) async {
+  Future<bool> connectBle({String? deviceAddress, String? deviceName}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.connectBle(deviceAddress: deviceAddress);
+      await _apiService.connectBle(deviceAddress: deviceAddress, deviceName: deviceName);
       await loadPrinterStatus();
       _errorMessage = null;
       _errorDetails = null;
@@ -228,12 +253,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Print single image
-  Future<bool> printImage(File imageFile, {int? paperWidthMm}) async {
+  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.printImage(imageFile, paperWidthMm: paperWidthMm);
+      await _apiService.printImage(imageFile, paperWidthMm: paperWidthMm, smartCrop: smartCrop);
       _errorMessage = null;
       _errorDetails = null;
       return true;
@@ -247,12 +272,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Print PDF
-  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm}) async {
+  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.printPdf(pdfFile, pages, paperWidthMm: paperWidthMm);
+      await _apiService.printPdf(pdfFile, pages, paperWidthMm: paperWidthMm, smartCrop: smartCrop);
       _errorMessage = null;
       _errorDetails = null;
       return true;
@@ -266,12 +291,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Print batch
-  Future<bool> printBatch(List<File> files, {int? paperWidthMm}) async {
+  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.printBatch(files, paperWidthMm: paperWidthMm);
+      await _apiService.printBatch(files, paperWidthMm: paperWidthMm, smartCrop: smartCrop);
       _errorMessage = null;
       _errorDetails = null;
       return true;

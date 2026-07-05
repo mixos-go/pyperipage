@@ -147,3 +147,12 @@ class BleTransportSync:
 
 # Alias untuk backward compatibility -- driver.py mengimpor nama ini.
 BleTransportDefault = BleTransportSync
+
+# WAJIB ADA (fix Juli 2026): __init__.py (file yang SAMA/di-sync dari
+# library/peripage_a9/__init__.py di ketiga platform) melakukan:
+#   from .transport_ble import BleTransport, TransportError as BleTransportError
+# Nama `BleTransport` ini HARUS ada persis di sini walau implementasi
+# Android cuma punya `BleTransportSync` -- kalau tidak, import __init__.py
+# gagal total dengan "ImportError: cannot import name 'BleTransport'",
+# yang berarti SELURUH package peripage_a9 gagal dimuat (bukan cuma BLE).
+BleTransport = BleTransportSync

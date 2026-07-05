@@ -34,6 +34,7 @@ from peripage_a9 import (
     load_paper_width_mm,
     save_paper_width_mm,
     smart_crop_and_resize,
+    resize_to_paper_width,
 )
 
 try:
@@ -63,6 +64,8 @@ app.add_middleware(
 printer_usb = None
 printer_ble = None
 current_transport = "usb"  # "usb" atau "ble"
+current_device_address = None
+current_device_name = None
 
 
 # =====================================================================
@@ -74,6 +77,8 @@ class PrinterStatus(BaseModel):
     transport_type: str
     paper_width_mm: int
     message: str
+    device_address: Optional[str] = None
+    device_name: Optional[str] = None
 
 
 class PrintRequest(BaseModel):
@@ -88,6 +93,7 @@ class PaperWidthRequest(BaseModel):
 
 class BleConnectRequest(BaseModel):
     device_address: Optional[str] = None
+    device_name: Optional[str] = None
 
 
 # =====================================================================
@@ -163,6 +169,8 @@ async def get_status():
         connected=connected,
         transport_type=current_transport,
         paper_width_mm=load_paper_width_mm(),
+        device_address=current_device_address if connected else None,
+        device_name=current_device_name if connected else None,
         message=message
     )
 
@@ -170,13 +178,15 @@ async def get_status():
 @app.post("/api/connect/usb")
 async def connect_usb():
     """Koneksi ke printer via USB."""
-    global current_transport, printer_usb
+    global current_transport, printer_usb, current_device_address, current_device_name
     current_transport = "usb"
     printer_usb = PeriPageA9USB()
     
     success = printer_usb.connect()
     
     if success:
+        current_device_address = None
+        current_device_name = "PeriPage A9 (USB)"
         return {"status": "success", "message": "Terhubung ke printer via USB"}
     else:
         raise HTTPException(status_code=400, detail="Gagal koneksi ke printer USB")
@@ -185,15 +195,18 @@ async def connect_usb():
 @app.post("/api/connect/ble")
 async def connect_ble(request: Optional[BleConnectRequest] = None):
     """Koneksi ke printer via BLE."""
-    global current_transport, printer_ble
+    global current_transport, printer_ble, current_device_address, current_device_name
     
     device_address = request.device_address if request else None
+    device_name = request.device_name if request else None
     current_transport = "ble"
     printer_ble = PeriPageA9BLE(device_address=device_address)
     
     success = printer_ble.connect()
     
     if success:
+        current_device_address = device_address
+        current_device_name = device_name or "Printer BLE"
         return {"status": "success", "message": "Terhubung ke printer via BLE"}
     else:
         raise HTTPException(status_code=400, detail="Gagal koneksi ke printer BLE")
@@ -205,7 +218,7 @@ async def disconnect():
     Dipakai SettingsScreen (Flutter) -- mirroring disconnect_printer() di
     python_service.py (jalur Android), supaya perilakunya konsisten lintas
     platform."""
-    global printer_usb, printer_ble
+    global printer_usb, printer_ble, current_device_address, current_device_name
 
     active = printer_usb if current_transport == "usb" else printer_ble
     if active is not None and getattr(active, "_transport", None) is not None:
@@ -216,6 +229,8 @@ async def disconnect():
 
     printer_usb = None
     printer_ble = None
+    current_device_address = None
+    current_device_name = None
     return {"status": "success", "message": "Printer terputus."}
 
 
@@ -263,10 +278,11 @@ async def get_paper_width():
 @app.post("/api/preview/image")
 async def preview_image(
     image: UploadFile = File(...),
-    paper_width_mm: Optional[int] = None
+    paper_width_mm: Optional[int] = None,
+    smart_crop: bool = Form(True)
 ):
     """
-    Upload gambar dan dapatkan preview hasil smart crop.
+    Upload gambar dan dapatkan preview hasil crop (smart atau manual).
     Return: gambar yang sudah di-crop dan di-resize sesuai lebar kertas.
     """
     try:
@@ -278,8 +294,9 @@ async def preview_image(
         if paper_width_mm is None:
             paper_width_mm = load_paper_width_mm()
         
-        # Smart crop dan resize
-        cropped_img = smart_crop_and_resize(img, paper_width_mm)
+        # Smart crop (auto-trim whitespace) ATAU manual (resize apa adanya)
+        # -- toggle dari Print Screen.
+        cropped_img = smart_crop_and_resize(img, paper_width_mm) if smart_crop else resize_to_paper_width(img, paper_width_mm)
         
         # Return sebagai PNG
         return Response(
@@ -295,7 +312,8 @@ async def preview_image(
 @app.post("/api/print/image")
 async def print_image(
     image: UploadFile = File(...),
-    paper_width_mm: Optional[int] = Form(None)
+    paper_width_mm: Optional[int] = Form(None),
+    smart_crop: bool = Form(True)
 ):
     """Print gambar langsung."""
     try:
@@ -310,8 +328,8 @@ async def print_image(
         # Set paper width
         printer.set_paper_width(paper_width_mm, persist=False)
         
-        # Smart crop
-        cropped_img = printer.smart_crop_and_resize(img)
+        # Smart/manual crop -- toggle dari Print Screen.
+        cropped_img = printer.smart_crop_and_resize(img, use_smart_crop=smart_crop)
         
         # Connect jika belum
         if not printer._transport:
@@ -332,7 +350,8 @@ async def print_image(
 async def print_pdf(
     pdf_file: UploadFile = File(...),
     pages: str = Form(...),  # Comma-separated page indices, e.g., "0,1,2"
-    paper_width_mm: Optional[int] = Form(None)
+    paper_width_mm: Optional[int] = Form(None),
+    smart_crop: bool = Form(True)
 ):
     """
     Print PDF. 
@@ -366,11 +385,11 @@ async def print_pdf(
                 if not printer.connect():
                     raise HTTPException(status_code=400, detail="Gagal koneksi ke printer")
             
-            # Smart crop semua halaman yang dipilih
+            # Smart/manual crop semua halaman yang dipilih -- toggle dari Print Screen.
             cropped_images = {}
             for idx in page_indices:
                 if 0 <= idx < len(raw_pages):
-                    cropped_images[idx] = printer.smart_crop_and_resize(raw_pages[idx])
+                    cropped_images[idx] = printer.smart_crop_and_resize(raw_pages[idx], use_smart_crop=smart_crop)
             
             # Print
             printer.print_pages(page_indices, cropped_images)
@@ -389,7 +408,8 @@ async def print_pdf(
 @app.post("/api/print/batch")
 async def print_batch(
     files: List[UploadFile] = File(...),
-    paper_width_mm: Optional[int] = Form(None)
+    paper_width_mm: Optional[int] = Form(None),
+    smart_crop: bool = Form(True)
 ):
     """
     Print multiple files (gambar atau PDF) sekaligus.
@@ -423,13 +443,13 @@ async def print_batch(
                 try:
                     raw_pages = convert_from_path(tmp_path, dpi=300)
                     for page in raw_pages:
-                        all_images.append(printer.smart_crop_and_resize(page))
+                        all_images.append(printer.smart_crop_and_resize(page, use_smart_crop=smart_crop))
                 finally:
                     os.unlink(tmp_path)
             else:
                 # Gambar
                 img = Image.open(io.BytesIO(contents))
-                all_images.append(printer.smart_crop_and_resize(img))
+                all_images.append(printer.smart_crop_and_resize(img, use_smart_crop=smart_crop))
         
         if not all_images:
             raise HTTPException(status_code=400, detail="Tidak ada halaman valid untuk dicetak")

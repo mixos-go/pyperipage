@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:lottie/lottie.dart';
 import '../../providers/printer_provider.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/theme/theme_controller.dart';
 import '../../core/utils/constants.dart';
+import '../../core/services/recent_files_service.dart';
 import '../print/print_screen.dart';
 import '../settings/settings_screen.dart';
+import '../logs/log_viewer_screen.dart';
 import '../../services/desktop_backend_service.dart';
+import '../../widgets/circle_nav_bar.dart';
+import '../../widgets/printer_status_header.dart';
 
-/// Home Screen - Main dashboard aplikasi PeriPage A9
+/// App Shell -- root navigasi aplikasi PyPeriPage.
+/// Nav bawah custom (CircleNavBar): [Settings] [Print - circle] [Workspace].
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -19,7 +26,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
   final List<Widget> _screens = [
-    const HomeTab(),
+    const WorkspaceScreen(),
     const PrintScreen(),
     const SettingsScreen(),
   ];
@@ -27,7 +34,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Check server availability on startup
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<PrinterProvider>().checkServerAvailability();
       context.read<PrinterProvider>().loadPrinterStatus();
@@ -38,42 +44,20 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _screens,
-      ),
-      bottomNavigationBar: NavigationBar(
+      body: IndexedStack(index: _selectedIndex, children: _screens),
+      bottomNavigationBar: CircleNavBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.print_outlined),
-            selectedIcon: Icon(Icons.print),
-            label: 'Print',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
+        onTap: (index) => setState(() => _selectedIndex = index),
       ),
     );
   }
 }
 
-/// Home Tab - Menampilkan status printer dan quick actions
-class HomeTab extends StatelessWidget {
-  const HomeTab({super.key});
+/// Workspace (sebelumnya "HomeTab") -- dashboard utama gaya "AI workspace":
+/// header status printer animasi, drawer navigasi, recent files, quick
+/// actions, dan info printer.
+class WorkspaceScreen extends StatelessWidget {
+  const WorkspaceScreen({super.key});
 
   Future<void> _handleRefresh(BuildContext context, PrinterProvider provider) async {
     await provider.checkServerAvailability();
@@ -118,10 +102,7 @@ class HomeTab extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.all(UiConstants.spacingMd),
-              child: Text(
-                'Pilih Printer BLE',
-                style: Theme.of(sheetContext).textTheme.titleMedium,
-              ),
+              child: Text('Pilih Printer BLE', style: Theme.of(sheetContext).textTheme.titleMedium),
             ),
             ...provider.bleDevices.map((device) => ListTile(
                   leading: const Icon(Icons.bluetooth),
@@ -130,7 +111,7 @@ class HomeTab extends StatelessWidget {
                   trailing: device.rssi != null ? Text('${device.rssi} dBm') : null,
                   onTap: () async {
                     Navigator.pop(sheetContext);
-                    final success = await provider.connectBle(deviceAddress: device.address);
+                    final success = await provider.connectBle(deviceAddress: device.address, deviceName: device.name);
                     if (!context.mounted) return;
                     if (success) {
                       _showSnackBar(context, 'Terhubung ke ${device.name}.');
@@ -172,15 +153,8 @@ class HomeTab extends StatelessWidget {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Detail Error'),
-        content: SingleChildScrollView(
-          child: SelectableText('$message\n\n$details'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Tutup'),
-          ),
-        ],
+        content: SingleChildScrollView(child: SelectableText('$message\n\n$details')),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Tutup'))],
       ),
     );
   }
@@ -191,14 +165,22 @@ class HomeTab extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('PeriPage A9'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => _handleRefresh(context, provider),
+        automaticallyImplyLeading: false,
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(context).openDrawer(),
           ),
+        ),
+        title: PrinterStatusHeader(
+          isConnected: provider.isConnected,
+          deviceName: provider.printerStatus?.deviceName,
+        ),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh), onPressed: () => _handleRefresh(context, provider)),
         ],
       ),
+      drawer: const _WorkspaceDrawer(),
       body: RefreshIndicator(
         onRefresh: () => _handleRefresh(context, provider),
         child: SingleChildScrollView(
@@ -207,22 +189,14 @@ class HomeTab extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Status Card
               _buildStatusCard(context, provider),
-              
               const SizedBox(height: UiConstants.spacingLg),
-              
-              // Quick Actions
-              Text(
-                'Quick Actions',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
+              Text('Quick Actions', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: UiConstants.spacingMd),
               _buildQuickActions(context, provider),
-              
               const SizedBox(height: UiConstants.spacingLg),
-              
-              // Info Card
+              _buildRecentFilesSection(context, provider),
+              const SizedBox(height: UiConstants.spacingLg),
               _buildInfoCard(context, provider),
             ],
           ),
@@ -232,7 +206,19 @@ class HomeTab extends StatelessWidget {
   }
 
   Widget _buildStatusCard(BuildContext context, PrinterProvider provider) {
-    return Card(
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(UiConstants.borderRadiusLg),
+        gradient: provider.isConnected
+            ? LinearGradient(
+                colors: [AppTheme.successColor.withValues(alpha: 0.12), Colors.transparent],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        color: provider.isConnected ? null : Theme.of(context).cardColor,
+        border: Border.all(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08)),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(UiConstants.spacingLg),
         child: Column(
@@ -240,14 +226,17 @@ class HomeTab extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(
-                  provider.isConnected 
-                    ? Icons.print 
-                    : Icons.print_disabled,
-                  color: provider.isConnected 
-                    ? AppTheme.successColor 
-                    : AppTheme.errorColor,
-                  size: 32,
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: (provider.isConnected ? AppTheme.successColor : AppTheme.errorColor).withValues(alpha: 0.12),
+                  ),
+                  child: Icon(
+                    provider.isConnected ? Icons.print : Icons.print_disabled,
+                    color: provider.isConnected ? AppTheme.successColor : AppTheme.errorColor,
+                    size: 28,
+                  ),
                 ),
                 const SizedBox(width: UiConstants.spacingMd),
                 Expanded(
@@ -257,10 +246,8 @@ class HomeTab extends StatelessWidget {
                       Text(
                         provider.isConnected ? 'Printer Terhubung' : 'Tidak Terhubung',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: provider.isConnected 
-                            ? AppTheme.successColor 
-                            : AppTheme.errorColor,
-                        ),
+                              color: provider.isConnected ? AppTheme.successColor : AppTheme.errorColor,
+                            ),
                       ),
                       const SizedBox(height: UiConstants.spacingXs),
                       Text(
@@ -272,7 +259,6 @@ class HomeTab extends StatelessWidget {
                 ),
               ],
             ),
-            
             if (!provider.isServerAvailable) ...[
               const SizedBox(height: UiConstants.spacingMd),
               Container(
@@ -288,21 +274,12 @@ class HomeTab extends StatelessWidget {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(
-                          Icons.warning_amber_rounded,
-                          color: AppTheme.warningColor,
-                        ),
+                        const Icon(Icons.warning_amber_rounded, color: AppTheme.warningColor),
                         const SizedBox(width: UiConstants.spacingSm),
                         Expanded(
                           child: Text(
-                            // Tampilkan alasan ASLI (exit code, stderr backend,
-                            // dst dari provider.errorMessage) -- BUKAN pesan
-                            // generik statis yang tidak menjelaskan apa-apa.
-                            provider.errorMessage ??
-                                'Python backend tidak tersedia. Pastikan server berjalan di port 8000.',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: AppTheme.warningColor,
-                            ),
+                            provider.errorMessage ?? 'Python backend tidak tersedia. Pastikan server berjalan di port 8000.',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppTheme.warningColor),
                           ),
                         ),
                       ],
@@ -319,10 +296,7 @@ class HomeTab extends StatelessWidget {
                                   if (!context.mounted) return;
                                   if (ok) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Backend berhasil dijalankan ulang.'),
-                                        backgroundColor: AppTheme.successColor,
-                                      ),
+                                      const SnackBar(content: Text('Backend berhasil dijalankan ulang.'), backgroundColor: AppTheme.successColor),
                                     );
                                   }
                                 },
@@ -335,10 +309,7 @@ class HomeTab extends StatelessWidget {
                 ),
               ),
             ],
-            
             const SizedBox(height: UiConstants.spacingMd),
-            
-            // Connection buttons
             Row(
               children: [
                 Expanded(
@@ -351,11 +322,6 @@ class HomeTab extends StatelessWidget {
                 const SizedBox(width: UiConstants.spacingSm),
                 Expanded(
                   child: OutlinedButton.icon(
-                    // Connect BLE "buta" (tanpa address) sudah tidak didukung lagi
-                    // sejak BLE jadi universal (bisa ke printer merk apa pun, bukan
-                    // cuma yang bernama "PeriPage") -- device_address WAJIB dipilih
-                    // dulu lewat scan, makanya tombol ini pakai alur yang sama
-                    // dengan Quick Action "Scan BLE".
                     onPressed: provider.isLoading ? null : () => _handleScanBle(context, provider),
                     icon: const Icon(Icons.bluetooth),
                     label: const Text('BLE'),
@@ -382,45 +348,28 @@ class HomeTab extends StatelessWidget {
           icon: Icons.image,
           title: 'Print Gambar',
           subtitle: 'Dari gallery',
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const PrintScreen()),
-            );
-          },
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrintScreen())),
         ),
         _buildQuickActionCard(
           context,
           icon: Icons.picture_as_pdf,
           title: 'Print PDF',
           subtitle: 'Resi & Label',
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const PrintScreen()),
-            );
-          },
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrintScreen())),
         ),
         _buildQuickActionCard(
           context,
           icon: Icons.folder_open,
           title: 'Batch Print',
           subtitle: 'Multiple files',
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const PrintScreen(initialBatchMode: true)),
-            );
-          },
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrintScreen(initialBatchMode: true))),
         ),
         _buildQuickActionCard(
           context,
           icon: Icons.bluetooth_searching,
           title: 'Scan BLE',
           subtitle: 'Cari device',
-          onTap: () {
-            _handleScanBle(context, provider);
-          },
+          onTap: () => _handleScanBle(context, provider),
         ),
       ],
     );
@@ -434,35 +383,31 @@ class HomeTab extends StatelessWidget {
     required VoidCallback onTap,
   }) {
     return Card(
-      elevation: 2,
+      elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(UiConstants.borderRadiusMd),
+        borderRadius: BorderRadius.circular(UiConstants.borderRadiusLg),
+        side: BorderSide(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08)),
       ),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(UiConstants.borderRadiusMd),
+        borderRadius: BorderRadius.circular(UiConstants.borderRadiusLg),
         child: Padding(
           padding: const EdgeInsets.all(UiConstants.spacingMd),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 40,
-                color: AppTheme.primaryColor,
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: AppTheme.primaryGradient,
+                ),
+                child: Icon(icon, size: 24, color: Colors.white),
               ),
               const SizedBox(height: UiConstants.spacingSm),
-              Text(
-                title,
-                style: Theme.of(context).textTheme.titleSmall,
-                textAlign: TextAlign.center,
-              ),
+              Text(title, style: Theme.of(context).textTheme.titleSmall, textAlign: TextAlign.center),
               const SizedBox(height: UiConstants.spacingXs),
-              Text(
-                subtitle,
-                style: Theme.of(context).textTheme.bodySmall,
-                textAlign: TextAlign.center,
-              ),
+              Text(subtitle, style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
             ],
           ),
         ),
@@ -470,35 +415,103 @@ class HomeTab extends StatelessWidget {
     );
   }
 
+  Widget _buildRecentFilesSection(BuildContext context, PrinterProvider provider) {
+    final files = provider.recentFiles;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Recent Files', style: Theme.of(context).textTheme.titleLarge),
+            if (files.isNotEmpty)
+              TextButton(
+                onPressed: () => provider.clearRecentFiles(),
+                child: const Text('Hapus'),
+              ),
+          ],
+        ),
+        const SizedBox(height: UiConstants.spacingSm),
+        if (files.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: UiConstants.spacingLg),
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: 100,
+                    height: 100,
+                    child: Lottie.asset(
+                      'assets/lottie/empty_state_float.json',
+                      errorBuilder: (c, e, s) => const Icon(Icons.insert_drive_file_outlined, size: 48, color: Colors.grey),
+                    ),
+                  ),
+                  const SizedBox(height: UiConstants.spacingSm),
+                  Text(
+                    'Belum ada file yang di-print.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ...files.map((f) => _buildRecentFileTile(context, f)),
+      ],
+    );
+  }
+
+  Widget _buildRecentFileTile(BuildContext context, RecentFile file) {
+    final icon = switch (file.type) {
+      'pdf' => Icons.picture_as_pdf,
+      'batch' => Icons.folder_open,
+      _ => Icons.image,
+    };
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: UiConstants.spacingSm),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(UiConstants.borderRadiusMd),
+        side: BorderSide(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08)),
+      ),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.12),
+          child: Icon(icon, color: AppTheme.primaryColor),
+        ),
+        title: Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(_formatRelativeTime(file.printedAt)),
+      ),
+    );
+  }
+
+  String _formatRelativeTime(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return 'Baru saja';
+    if (diff.inHours < 1) return '${diff.inMinutes} menit lalu';
+    if (diff.inDays < 1) return '${diff.inHours} jam lalu';
+    return '${diff.inDays} hari lalu';
+  }
+
   Widget _buildInfoCard(BuildContext context, PrinterProvider provider) {
     return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(UiConstants.borderRadiusLg),
+        side: BorderSide(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08)),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(UiConstants.spacingLg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Informasi Printer',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text('Informasi Printer', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: UiConstants.spacingMd),
-            _buildInfoRow(
-              context,
-              label: 'Transport',
-              value: provider.printerStatus?.transportType.toUpperCase() ?? '-',
-            ),
+            _buildInfoRow(context, label: 'Transport', value: provider.printerStatus?.transportType.toUpperCase() ?? '-'),
             const Divider(),
-            _buildInfoRow(
-              context,
-              label: 'Lebar Kertas',
-              value: '${provider.printerStatus?.paperWidthMm ?? 0} mm',
-            ),
+            _buildInfoRow(context, label: 'Lebar Kertas', value: '${provider.printerStatus?.paperWidthMm ?? 0} mm'),
             const Divider(),
-            _buildInfoRow(
-              context,
-              label: 'PDF Support',
-              value: provider.printerConfig?.pdfSupport ?? false ? 'Yes' : 'No',
-            ),
+            _buildInfoRow(context, label: 'PDF Support', value: provider.printerConfig?.pdfSupport ?? false ? 'Yes' : 'No'),
           ],
         ),
       ),
@@ -506,20 +519,87 @@ class HomeTab extends StatelessWidget {
   }
 
   Widget _buildInfoRow(BuildContext context, {required String label, required String value}) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.bodyMedium,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodyMedium),
+          Text(value, style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Drawer Workspace -- akses cepat ke Logs, About, dan pilihan tema.
+class _WorkspaceDrawer extends StatelessWidget {
+  const _WorkspaceDrawer();
+
+  @override
+  Widget build(BuildContext context) {
+    final themeController = context.watch<ThemeController>();
+
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(UiConstants.spacingLg),
+              decoration: const BoxDecoration(gradient: AppTheme.primaryGradient),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundColor: Colors.white,
+                    child: Icon(Icons.print, color: AppTheme.primaryColor, size: 28),
+                  ),
+                  SizedBox(height: UiConstants.spacingSm),
+                  Text('PyPeriPage', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text('PeriPage A9 Printer', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.article_outlined),
+              title: const Text('Log Aplikasi'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const LogViewerScreen()));
+              },
+            ),
+            const Divider(),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: UiConstants.spacingMd, vertical: UiConstants.spacingSm),
+              child: Text('Tema', style: Theme.of(context).textTheme.titleSmall),
+            ),
+            RadioGroup<AppThemeMode>(
+              groupValue: themeController.mode,
+              onChanged: (m) => themeController.setMode(m!),
+              child: const Column(
+                children: [
+                  RadioListTile<AppThemeMode>(
+                    value: AppThemeMode.light,
+                    title: Text('Light'),
+                  ),
+                  RadioListTile<AppThemeMode>(
+                    value: AppThemeMode.dark,
+                    title: Text('Dark'),
+                  ),
+                  RadioListTile<AppThemeMode>(
+                    value: AppThemeMode.amoled,
+                    title: Text('AMOLED'),
+                    subtitle: Text('Hitam murni, hemat daya OLED'),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        Text(
-          value,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

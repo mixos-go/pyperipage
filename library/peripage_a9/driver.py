@@ -40,14 +40,19 @@ class PeriPageA9USB:
         if persist:
             protocol.save_paper_width_mm(paper_width_mm, warning_tag="LIBRARY")
 
-    def smart_crop_and_resize(self, pil_img):
+    def smart_crop_and_resize(self, pil_img, use_smart_crop: bool = True):
         """
         Algoritma Sinkronisasi Cetak & Preview:
         Memotong ruang kosong 4-arah, mengunci lebar konten murni halaman
         pada lebar kertas fisik aktif (self.paper_width_mm), dan menyerahkannya
         ke fungsi cetak.
+
+        use_smart_crop=False (mode "Manual Crop" di UI): skip auto-trim
+        whitespace, cuma resize gambar asli ke lebar kertas.
         """
-        return protocol.smart_crop_and_resize(pil_img, self.paper_width_mm, error_tag="LIBRARY")
+        if use_smart_crop:
+            return protocol.smart_crop_and_resize(pil_img, self.paper_width_mm, error_tag="LIBRARY")
+        return protocol.resize_to_paper_width(pil_img, self.paper_width_mm, error_tag="LIBRARY")
 
     def connect(self):
         """Mencari fisik hardware, melepas driver kernel, dan mengklaim interface USB.
@@ -115,9 +120,11 @@ class PeriPageA9BLE:
         if persist:
             protocol.save_paper_width_mm(paper_width_mm, warning_tag="LIBRARY-BLE")
 
-    def smart_crop_and_resize(self, pil_img):
-        """Smart crop dan resize gambar sesuai lebar kertas aktif."""
-        return protocol.smart_crop_and_resize(pil_img, self.paper_width_mm, error_tag="LIBRARY-BLE")
+    def smart_crop_and_resize(self, pil_img, use_smart_crop: bool = True):
+        """Smart/manual crop dan resize gambar sesuai lebar kertas aktif."""
+        if use_smart_crop:
+            return protocol.smart_crop_and_resize(pil_img, self.paper_width_mm, error_tag="LIBRARY-BLE")
+        return protocol.resize_to_paper_width(pil_img, self.paper_width_mm, error_tag="LIBRARY-BLE")
 
     def connect(self):
         """Koneksi ke printer via BLE. Return True/False."""

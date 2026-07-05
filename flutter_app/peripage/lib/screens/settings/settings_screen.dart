@@ -2,16 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/printer_provider.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/theme/theme_controller.dart';
 import '../../core/utils/constants.dart';
 import '../logs/log_viewer_screen.dart';
 
 /// Settings Screen - Pengaturan printer & informasi aplikasi.
 ///
-/// Sebelumnya file ini cuma placeholder ("Segera hadir") walaupun
-/// PrinterProvider sudah punya semua kemampuan yang dibutuhkan
-/// (setPaperWidth, status koneksi, disconnect) -- jadi UI-nya dilengkapi
-/// di sini, TANPA menambah logic baru di provider/backend selain
-/// `disconnect()` yang memang belum di-expose sebelumnya.
+/// REBUILD (Juli 2026): tambah info device terhubung (nama, address/UUID,
+/// transport type) + tombol connect USB/BLE langsung dari Settings (dulu
+/// cuma bisa dari Home), dan pemilih tema (Light/Dark/AMOLED).
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -22,6 +21,63 @@ class SettingsScreen extends StatelessWidget {
       SnackBar(
         content: Text(success ? 'Printer diputus.' : (provider.errorMessage ?? 'Gagal memutus koneksi.')),
         backgroundColor: success ? AppTheme.successColor : AppTheme.errorColor,
+      ),
+    );
+  }
+
+  Future<void> _handleConnectUsb(BuildContext context, PrinterProvider provider) async {
+    final success = await provider.connectUsb();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(success ? 'Terhubung via USB.' : (provider.errorMessage ?? 'Gagal terhubung via USB.')),
+        backgroundColor: success ? AppTheme.successColor : AppTheme.errorColor,
+      ),
+    );
+  }
+
+  Future<void> _handleScanBle(BuildContext context, PrinterProvider provider) async {
+    await provider.discoverBleDevices();
+    if (!context.mounted) return;
+    if (provider.errorMessage != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(provider.errorMessage!), backgroundColor: AppTheme.errorColor),
+      );
+      return;
+    }
+    if (provider.bleDevices.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tidak ada device BLE ditemukan.')));
+      return;
+    }
+    if (!context.mounted) return;
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(UiConstants.spacingMd),
+              child: Text('Pilih Printer BLE', style: Theme.of(sheetContext).textTheme.titleMedium),
+            ),
+            ...provider.bleDevices.map((device) => ListTile(
+                  leading: const Icon(Icons.bluetooth),
+                  title: Text(device.name),
+                  subtitle: Text(device.address),
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    final success = await provider.connectBle(deviceAddress: device.address, deviceName: device.name);
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(success ? 'Terhubung ke ${device.name}.' : (provider.errorMessage ?? 'Gagal terhubung.')),
+                        backgroundColor: success ? AppTheme.successColor : AppTheme.errorColor,
+                      ),
+                    );
+                  },
+                )),
+          ],
+        ),
       ),
     );
   }
@@ -42,15 +98,15 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<PrinterProvider>();
+    final themeController = context.watch<ThemeController>();
+    final status = provider.printerStatus;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-      ),
+      appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.all(UiConstants.spacingMd),
         children: [
-          // Status Koneksi
+          // Status Koneksi + Info Device Terhubung
           Card(
             child: Padding(
               padding: const EdgeInsets.all(UiConstants.spacingLg),
@@ -67,19 +123,9 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       const SizedBox(width: UiConstants.spacingSm),
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              provider.isConnected ? 'Terhubung' : 'Tidak terhubung',
-                              style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
-                            ),
-                            if (provider.isConnected)
-                              Text(
-                                'Via ${provider.printerStatus?.transportType.toUpperCase() ?? '-'}',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                          ],
+                        child: Text(
+                          provider.isConnected ? 'Terhubung' : 'Tidak terhubung',
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
                         ),
                       ),
                       if (provider.isConnected)
@@ -90,6 +136,38 @@ class SettingsScreen extends StatelessWidget {
                         ),
                     ],
                   ),
+                  if (provider.isConnected && status != null) ...[
+                    const Divider(height: UiConstants.spacingLg),
+                    _InfoRow(label: 'Nama Device', value: status.deviceName ?? '-'),
+                    const SizedBox(height: 6),
+                    _InfoRow(label: 'Address / UUID', value: status.deviceAddress ?? '(USB tidak punya address)'),
+                    const SizedBox(height: 6),
+                    _InfoRow(label: 'Transport', value: status.transportType.toUpperCase()),
+                    const SizedBox(height: 6),
+                    _InfoRow(label: 'Lebar Kertas Aktif', value: '${status.paperWidthMm} mm'),
+                  ],
+                  if (!provider.isConnected) ...[
+                    const SizedBox(height: UiConstants.spacingMd),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: provider.isLoading ? null : () => _handleConnectUsb(context, provider),
+                            icon: const Icon(Icons.usb),
+                            label: const Text('USB'),
+                          ),
+                        ),
+                        const SizedBox(width: UiConstants.spacingSm),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: provider.isLoading ? null : () => _handleScanBle(context, provider),
+                            icon: const Icon(Icons.bluetooth),
+                            label: const Text('BLE'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -137,6 +215,31 @@ class SettingsScreen extends StatelessWidget {
 
           const SizedBox(height: UiConstants.spacingMd),
 
+          // Tema
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(UiConstants.spacingLg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Tampilan', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: UiConstants.spacingMd),
+                  SegmentedButton<AppThemeMode>(
+                    segments: const [
+                      ButtonSegment(value: AppThemeMode.light, label: Text('Light'), icon: Icon(Icons.light_mode)),
+                      ButtonSegment(value: AppThemeMode.dark, label: Text('Dark'), icon: Icon(Icons.dark_mode)),
+                      ButtonSegment(value: AppThemeMode.amoled, label: Text('AMOLED'), icon: Icon(Icons.nightlight)),
+                    ],
+                    selected: {themeController.mode},
+                    onSelectionChanged: (modes) => themeController.setMode(modes.first),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: UiConstants.spacingMd),
+
           // Log Aplikasi -- lihat & export semua log sesi (koneksi, error
           // native call, backend desktop, dll) TANPA perlu adb logcat.
           Card(
@@ -156,10 +259,7 @@ class SettingsScreen extends StatelessWidget {
                     alignment: Alignment.centerRight,
                     child: TextButton.icon(
                       onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const LogViewerScreen()),
-                        );
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => const LogViewerScreen()));
                       },
                       icon: const Icon(Icons.article_outlined),
                       label: const Text('Lihat Log'),
@@ -181,7 +281,7 @@ class SettingsScreen extends StatelessWidget {
                 children: [
                   Text('Tentang', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: UiConstants.spacingMd),
-                  const _InfoRow(label: 'Aplikasi', value: 'PeriPage A9'),
+                  const _InfoRow(label: 'Aplikasi', value: 'PyPeriPage'),
                   const Divider(),
                   const _InfoRow(label: 'Versi', value: '1.0.0'),
                   const Divider(),
@@ -207,15 +307,20 @@ class _InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: UiConstants.spacingXs),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          Text(value, style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
-        ],
-      ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.bodyMedium),
+        const SizedBox(width: UiConstants.spacingSm),
+        Flexible(
+          child: SelectableText(
+            value,
+            textAlign: TextAlign.end,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
     );
   }
 }

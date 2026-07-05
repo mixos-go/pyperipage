@@ -132,15 +132,15 @@ class ApiService {
     }
   }
 
-  Future<bool> connectBle({String? deviceAddress}) async {
+  Future<bool> connectBle({String? deviceAddress, String? deviceName}) async {
     if (_isMobile) {
-      await _invokeNative('connectBle', {'deviceAddress': deviceAddress});
+      await _invokeNative('connectBle', {'deviceAddress': deviceAddress, 'deviceName': deviceName});
       return true;
     }
     final response = await http.post(
       Uri.parse('$baseUrl/api/connect/ble'),
       headers: {'Content-Type': 'application/json'},
-      body: json.encode({'device_address': deviceAddress}),
+      body: json.encode({'device_address': deviceAddress, 'device_name': deviceName}),
     );
     if (response.statusCode == 200) {
       return true;
@@ -223,11 +223,12 @@ class ApiService {
     }
   }
 
-  Future<String> previewImage(File imageFile, {int? paperWidthMm}) async {
+  Future<String> previewImage(File imageFile, {int? paperWidthMm, bool smartCrop = true}) async {
     if (_isMobile) {
       final data = await _invokeNative('previewImage', {
         'imagePath': imageFile.path,
         'paperWidthMm': paperWidthMm,
+        'smartCrop': smartCrop,
       });
       return data['image_base64'] as String;
     }
@@ -237,6 +238,7 @@ class ApiService {
     );
 
     request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
+    request.fields['smart_crop'] = smartCrop.toString();
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();
@@ -252,11 +254,12 @@ class ApiService {
     }
   }
 
-  Future<bool> printImage(File imageFile, {int? paperWidthMm}) async {
+  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true}) async {
     if (_isMobile) {
       await _invokeNative('printImage', {
         'imagePath': imageFile.path,
         'paperWidthMm': paperWidthMm,
+        'smartCrop': smartCrop,
       });
       return true;
     }
@@ -266,6 +269,7 @@ class ApiService {
     );
 
     request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
+    request.fields['smart_crop'] = smartCrop.toString();
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();
@@ -320,7 +324,7 @@ class ApiService {
     return imagePaths;
   }
 
-  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm}) async {
+  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true}) async {
     if (_isMobile) {
       // Rasterisasi PDF->gambar di Dart (pdfx/PDFium) dulu, karena
       // python_service.py di Android tidak bisa pasang PyMuPDF (fitz) --
@@ -332,6 +336,7 @@ class ApiService {
         'imagePaths': imagePaths,
         'pages': pages,
         'paperWidthMm': paperWidthMm,
+        'smartCrop': smartCrop,
       });
       return true;
     }
@@ -342,6 +347,7 @@ class ApiService {
 
     request.files.add(await http.MultipartFile.fromPath('pdf_file', pdfFile.path));
     request.fields['pages'] = pages.join(',');
+    request.fields['smart_crop'] = smartCrop.toString();
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();
@@ -357,11 +363,12 @@ class ApiService {
     }
   }
 
-  Future<bool> printBatch(List<File> files, {int? paperWidthMm}) async {
+  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true}) async {
     if (_isMobile) {
       await _invokeNative('printBatch', {
         'filePaths': files.map((f) => f.path).toList(),
         'paperWidthMm': paperWidthMm,
+        'smartCrop': smartCrop,
       });
       return true;
     }
@@ -373,6 +380,7 @@ class ApiService {
     for (var file in files) {
       request.files.add(await http.MultipartFile.fromPath('files', file.path));
     }
+    request.fields['smart_crop'] = smartCrop.toString();
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();

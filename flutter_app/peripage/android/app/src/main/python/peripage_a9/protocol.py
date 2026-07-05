@@ -84,6 +84,27 @@ def save_paper_width_mm(paper_width_mm, warning_tag="LOGIC"):
         traceback.print_exc()
 
 
+def resize_to_paper_width(pil_img, paper_width_mm=DEFAULT_PAPER_WIDTH_MM, error_tag="LOGIC"):
+    """
+    Mode MANUAL (lawan dari smart_crop_and_resize): cuma resize gambar ASLI
+    ke lebar kertas, TANPA auto-trim whitespace 4-arah. Dipakai kalau user
+    pilih toggle "Manual Crop" di Print Screen -- untuk kasus gambar yang
+    memang sengaja punya margin/whitespace yang tidak boleh dipotong
+    otomatis (mis. label dengan border kosong yang disengaja).
+    """
+    try:
+        img = pil_img.convert("RGB")
+        orig_w, orig_h = img.size
+        target_width, _ = get_paper_dimensions(paper_width_mm)
+        width_percent = target_width / float(orig_w)
+        target_height = int(orig_h * width_percent)
+        return img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    except Exception as e:
+        print(f"\n[{error_tag} ERROR] Gagal pada fungsi resize_to_paper_width:")
+        traceback.print_exc()
+        raise e
+
+
 def smart_crop_and_resize(pil_img, paper_width_mm=DEFAULT_PAPER_WIDTH_MM, error_tag="LOGIC"):
     """
     Algoritma Sinkronisasi Cetak (What You See Is What You Print):

@@ -4,12 +4,16 @@ class PrinterStatus {
   final String transportType; // 'usb' atau 'ble'
   final int paperWidthMm;
   final String message;
+  final String? deviceAddress; // MAC address BLE, null untuk USB/tidak konek
+  final String? deviceName;
 
   PrinterStatus({
     required this.connected,
     required this.transportType,
     required this.paperWidthMm,
     required this.message,
+    this.deviceAddress,
+    this.deviceName,
   });
 
   factory PrinterStatus.fromJson(Map<String, dynamic> json) {
@@ -18,6 +22,8 @@ class PrinterStatus {
       transportType: json['transport_type'] ?? 'usb',
       paperWidthMm: json['paper_width_mm'] ?? 58,
       message: json['message'] ?? '',
+      deviceAddress: json['device_address'] as String?,
+      deviceName: json['device_name'] as String?,
     );
   }
 
@@ -26,12 +32,16 @@ class PrinterStatus {
     String? transportType,
     int? paperWidthMm,
     String? message,
+    String? deviceAddress,
+    String? deviceName,
   }) {
     return PrinterStatus(
       connected: connected ?? this.connected,
       transportType: transportType ?? this.transportType,
       paperWidthMm: paperWidthMm ?? this.paperWidthMm,
       message: message ?? this.message,
+      deviceAddress: deviceAddress ?? this.deviceAddress,
+      deviceName: deviceName ?? this.deviceName,
     );
   }
 }

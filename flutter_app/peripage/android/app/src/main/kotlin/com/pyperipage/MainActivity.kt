@@ -76,7 +76,8 @@ class MainActivity: FlutterActivity() {
 
                 "connectBle" -> {
                     val deviceAddress = call.argument<String>("deviceAddress")
-                    handlePythonCall("connect_ble", result, deviceAddress)
+                    val deviceName = call.argument<String>("deviceName")
+                    handlePythonCall("connect_ble", result, deviceAddress, deviceName)
                 }
 
                 "disconnect" -> {
@@ -104,13 +105,15 @@ class MainActivity: FlutterActivity() {
                 "previewImage" -> {
                     val imagePath = call.argument<String>("imagePath")
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
-                    handlePythonCall("preview_image", result, imagePath, paperWidthMm)
+                    val smartCrop = call.argument<Boolean>("smartCrop") ?: true
+                    handlePythonCall("preview_image", result, imagePath, paperWidthMm, smartCrop)
                 }
 
                 "printImage" -> {
                     val imagePath = call.argument<String>("imagePath")
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
-                    handlePythonCall("print_image", result, imagePath, paperWidthMm)
+                    val smartCrop = call.argument<Boolean>("smartCrop") ?: true
+                    handlePythonCall("print_image", result, imagePath, paperWidthMm, smartCrop)
                 }
 
                 "printPdfPages" -> {
@@ -120,13 +123,15 @@ class MainActivity: FlutterActivity() {
                     val imagePaths = call.argument<List<String>>("imagePaths") ?: listOf()
                     val pages = call.argument<List<Int>>("pages") ?: listOf()
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
-                    handlePythonCall("print_pdf_pages", result, imagePaths, pages, paperWidthMm)
+                    val smartCrop = call.argument<Boolean>("smartCrop") ?: true
+                    handlePythonCall("print_pdf_pages", result, imagePaths, pages, paperWidthMm, smartCrop)
                 }
 
                 "printBatch" -> {
                     val filePaths = call.argument<List<String>>("filePaths") ?: listOf()
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
-                    handlePythonCall("print_batch", result, filePaths, paperWidthMm)
+                    val smartCrop = call.argument<Boolean>("smartCrop") ?: true
+                    handlePythonCall("print_batch", result, filePaths, paperWidthMm, smartCrop)
                 }
 
                 else -> {

@@ -1,12 +1,24 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:pdfx/pdfx.dart';
 import '../../providers/printer_provider.dart';
-import '../../data/models/printer_models.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/utils/constants.dart';
 
-/// Print Screen - Fitur utama untuk print PDF, Gambar, dan Label
+/// Print Screen - Fitur utama untuk print PDF, Gambar, dan Label.
+///
+/// REBUILD (Juli 2026):
+/// - Fix bug preview: sebelumnya `_showPreview` di-set balik ke false di
+///   blok `finally` SEBELUM widget render, jadi hasil preview TIDAK PERNAH
+///   kelihatan sama sekali walau API call-nya sukses.
+/// - Tambah toggle Smart Crop / Manual Crop (dulu selalu smart crop, tidak
+///   bisa dimatikan sama sekali).
+/// - PDF sekarang render THUMBNAIL per halaman (grid, bisa select/deselect
+///   multi-halaman) -- dulu cuma dialog ketik manual "1,2,3 atau 1-5".
 class PrintScreen extends StatefulWidget {
   final bool initialBatchMode;
 
@@ -21,8 +33,15 @@ class _PrintScreenState extends State<PrintScreen> {
   List<File> _selectedFiles = [];
   late bool _isBatchMode;
   int? _selectedPaperWidth;
-  List<int> _pdfPages = []; // Untuk select halaman PDF
-  bool _showPreview = false;
+  bool _smartCrop = true;
+
+  // PDF page selection
+  List<Uint8ListThumb> _pdfThumbnails = [];
+  Set<int> _selectedPages = {}; // 0-indexed
+  bool _loadingThumbnails = false;
+
+  // Preview gambar (non-PDF)
+  bool _isLoadingPreview = false;
   String? _previewImageBase64;
 
   @override
@@ -35,130 +54,130 @@ class _PrintScreenState extends State<PrintScreen> {
   Future<void> _loadConfig() async {
     final provider = context.read<PrinterProvider>();
     await provider.loadPrinterConfig();
-    if (provider.printerConfig != null) {
+    if (provider.printerConfig != null && mounted) {
       setState(() {
         _selectedPaperWidth = provider.printerConfig!.currentPaperWidth;
       });
     }
   }
 
+  bool get _isPdf => _selectedFile != null && _selectedFile!.path.toLowerCase().endsWith('.pdf');
+
   Future<void> _pickFile() async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg', 'bmp'],
         allowMultiple: _isBatchMode,
       );
 
-      if (result != null && result.files.single.path != null) {
-        if (_isBatchMode) {
-          setState(() {
-            _selectedFiles = result.paths
-                .where((path) => path != null)
-                .map((path) => File(path!))
-                .toList();
-            _selectedFile = null;
-          });
-        } else {
-          setState(() {
-            _selectedFile = File(result.files.single.path!);
-            _selectedFiles = [];
-          });
-          // Auto preview untuk single file
-          await _generatePreview();
-        }
+      if (result == null) return;
+
+      if (_isBatchMode) {
+        setState(() {
+          _selectedFiles = result.paths.where((p) => p != null).map((p) => File(p!)).toList();
+          _selectedFile = null;
+          _pdfThumbnails = [];
+          _selectedPages = {};
+          _previewImageBase64 = null;
+        });
+        return;
+      }
+
+      if (result.files.single.path == null) return;
+      final file = File(result.files.single.path!);
+      setState(() {
+        _selectedFile = file;
+        _selectedFiles = [];
+        _previewImageBase64 = null;
+        _pdfThumbnails = [];
+        _selectedPages = {};
+      });
+
+      if (file.path.toLowerCase().endsWith('.pdf')) {
+        await _loadPdfThumbnails(file);
+      } else {
+        await _generateImagePreview();
       }
     } catch (e) {
       _showError('Gagal memilih file: $e');
     }
   }
 
-  Future<void> _generatePreview() async {
-    if (_selectedFile == null) return;
-
-    final provider = context.read<PrinterProvider>();
-    
-    // Cek apakah file PDF atau image
-    final extension = _selectedFile!.path.split('.').last.toLowerCase();
-    
-    if (extension == 'pdf') {
-      // Untuk PDF, tampilkan dialog pilih halaman
-      _showPdfPageSelector();
-    } else {
-      // Untuk image, generate preview
+  /// Render THUMBNAIL tiap halaman PDF (bukan cuma minta user ketik nomor
+  /// halaman manual) supaya user bisa lihat & pilih halaman secara visual.
+  Future<void> _loadPdfThumbnails(File pdfFile) async {
+    setState(() => _loadingThumbnails = true);
+    try {
+      final document = await PdfDocument.openFile(pdfFile.path);
+      final thumbs = <Uint8ListThumb>[];
       try {
-        setState(() => _showPreview = true);
-        // Preview akan di-generate oleh backend
-        final preview = await provider.apiService.previewImage(
-          _selectedFile!,
-          paperWidthMm: _selectedPaperWidth,
-        );
-        setState(() {
-          _previewImageBase64 = preview;
-        });
-      } catch (e) {
-        _showError('Gagal generate preview: $e');
+        for (int i = 1; i <= document.pagesCount; i++) {
+          final page = await document.getPage(i);
+          try {
+            final rendered = await page.render(
+              width: page.width * 0.6,
+              height: page.height * 0.6,
+              format: PdfPageImageFormat.png,
+            );
+            if (rendered != null) {
+              thumbs.add(Uint8ListThumb(pageIndex: i - 1, bytes: rendered.bytes));
+            }
+          } finally {
+            await page.close();
+          }
+        }
       } finally {
-        setState(() => _showPreview = false);
+        await document.close();
       }
+      if (!mounted) return;
+      setState(() {
+        _pdfThumbnails = thumbs;
+        _selectedPages = {0}; // default: halaman pertama terpilih
+      });
+    } catch (e) {
+      _showError('Gagal render preview PDF: $e');
+    } finally {
+      if (mounted) setState(() => _loadingThumbnails = false);
     }
   }
 
-  void _showPdfPageSelector() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Pilih Halaman PDF'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Masukkan nomor halaman (contoh: 1,2,3 atau 1-5)'),
-            const SizedBox(height: 16),
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'Halaman',
-                hintText: '1,2,3 atau 1-5',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (value) {
-                // Parse input menjadi list halaman
-                // Implementasi sederhana: split by comma atau range
-                try {
-                  if (value.contains('-')) {
-                    final parts = value.split('-');
-                    final start = int.parse(parts[0].trim());
-                    final end = int.parse(parts[1].trim());
-                    _pdfPages = List.generate(end - start + 1, (i) => start + i);
-                  } else {
-                    _pdfPages = value
-                        .split(',')
-                        .map((s) => int.parse(s.trim()))
-                        .toList();
-                  }
-                } catch (e) {
-                  _pdfPages = [1]; // Default halaman 1
-                }
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Batal'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (_pdfPages.isEmpty) {
-                _pdfPages = [1];
-              }
-              Navigator.pop(context);
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
+  Future<void> _generateImagePreview() async {
+    if (_selectedFile == null) return;
+    final provider = context.read<PrinterProvider>();
+    setState(() => _isLoadingPreview = true);
+    try {
+      final preview = await provider.apiService.previewImage(
+        _selectedFile!,
+        paperWidthMm: _selectedPaperWidth,
+        smartCrop: _smartCrop,
+      );
+      if (!mounted) return;
+      setState(() => _previewImageBase64 = preview);
+    } catch (e) {
+      _showError('Gagal generate preview: $e');
+    } finally {
+      if (mounted) setState(() => _isLoadingPreview = false);
+    }
+  }
+
+  /// Dipanggil ulang setiap toggle Smart/Manual Crop diubah -- preview harus
+  /// ikut refresh supaya WYSIWYG (What You See Is What You Print) tetap benar.
+  Future<void> _onSmartCropChanged(bool value) async {
+    setState(() => _smartCrop = value);
+    if (_selectedFile != null && !_isPdf) {
+      await _generateImagePreview();
+    }
+  }
+
+  void _togglePageSelection(int pageIndex) {
+    setState(() {
+      if (_selectedPages.contains(pageIndex)) {
+        _selectedPages.remove(pageIndex);
+      } else {
+        _selectedPages.add(pageIndex);
+      }
+    });
   }
 
   Future<void> _print() async {
@@ -166,35 +185,35 @@ class _PrintScreenState extends State<PrintScreen> {
       _showError('Pilih file terlebih dahulu');
       return;
     }
+    if (_isPdf && _selectedPages.isEmpty) {
+      _showError('Pilih minimal 1 halaman untuk dicetak');
+      return;
+    }
 
     final provider = context.read<PrinterProvider>();
-    
+
     try {
       bool success = false;
-      
+
       if (_isBatchMode && _selectedFiles.isNotEmpty) {
-        // Print batch
-        success = await provider.printBatch(
-          _selectedFiles,
-          paperWidthMm: _selectedPaperWidth,
-        );
+        success = await provider.printBatch(_selectedFiles, paperWidthMm: _selectedPaperWidth, smartCrop: _smartCrop);
+        if (success) {
+          for (final f in _selectedFiles) {
+            await provider.recordRecentFile(path: f.path, name: f.path.split(Platform.pathSeparator).last, type: 'batch');
+          }
+        }
       } else if (_selectedFile != null) {
-        final extension = _selectedFile!.path.split('.').last.toLowerCase();
-        
-        if (extension == 'pdf') {
-          // Print PDF
-          if (_pdfPages.isEmpty) _pdfPages = [1];
-          success = await provider.printPdf(
-            _selectedFile!,
-            _pdfPages,
-            paperWidthMm: _selectedPaperWidth,
-          );
+        if (_isPdf) {
+          final pages = _selectedPages.toList()..sort();
+          success = await provider.printPdf(_selectedFile!, pages, paperWidthMm: _selectedPaperWidth, smartCrop: _smartCrop);
+          if (success) {
+            await provider.recordRecentFile(path: _selectedFile!.path, name: _selectedFile!.path.split(Platform.pathSeparator).last, type: 'pdf');
+          }
         } else {
-          // Print image
-          success = await provider.printImage(
-            _selectedFile!,
-            paperWidthMm: _selectedPaperWidth,
-          );
+          success = await provider.printImage(_selectedFile!, paperWidthMm: _selectedPaperWidth, smartCrop: _smartCrop);
+          if (success) {
+            await provider.recordRecentFile(path: _selectedFile!.path, name: _selectedFile!.path.split(Platform.pathSeparator).last, type: 'image');
+          }
         }
       }
 
@@ -202,7 +221,7 @@ class _PrintScreenState extends State<PrintScreen> {
         _showSuccess('Print berhasil!');
         _clearSelection();
       } else {
-        _showError('Print gagal');
+        _showError(provider.errorMessage ?? 'Print gagal');
       }
     } catch (e) {
       _showError('Error: $e');
@@ -214,26 +233,19 @@ class _PrintScreenState extends State<PrintScreen> {
       _selectedFile = null;
       _selectedFiles = [];
       _previewImageBase64 = null;
-      _pdfPages = [];
+      _pdfThumbnails = [];
+      _selectedPages = {};
     });
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-      ),
-    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: AppTheme.errorColor));
   }
 
   void _showSuccess(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-      ),
-    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: AppTheme.successColor));
   }
 
   @override
@@ -243,242 +255,51 @@ class _PrintScreenState extends State<PrintScreen> {
         title: const Text('Print'),
         actions: [
           IconButton(
-            icon: Icon(_isBatchMode ? Icons.looks_one : Icons.looks_3),
-            tooltip: _isBatchMode ? 'Mode Single' : 'Mode Batch',
-            onPressed: () {
-              setState(() {
-                _isBatchMode = !_isBatchMode;
-                _clearSelection();
-              });
-            },
+            icon: Icon(_isBatchMode ? Icons.looks_one : Icons.copy_all),
+            tooltip: _isBatchMode ? 'Mode single file' : 'Mode batch (multi file)',
+            onPressed: () => setState(() {
+              _isBatchMode = !_isBatchMode;
+              _clearSelection();
+            }),
           ),
         ],
       ),
       body: Consumer<PrinterProvider>(
-        builder: (context, provider, child) {
+        builder: (context, provider, _) {
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(UiConstants.spacingMd),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Connection Status
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        Icon(
-                          provider.isConnected
-                              ? Icons.print
-                              : Icons.print_disabled,
-                          color: provider.isConnected
-                              ? Colors.green
-                              : Colors.grey,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                provider.isConnected
-                                    ? 'Printer Terhubung'
-                                    : 'Printer Tidak Terhubung',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                provider.printerStatus?.transportType ??
-                                    'Belum terhubung',
-                                style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Paper Width Selection
-                if (provider.printerConfig != null) ...[
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Ukuran Kertas',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          DropdownButtonFormField<int>(
-                            initialValue: _selectedPaperWidth,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              labelText: 'Lebar Kertas (mm)',
-                            ),
-                            items: provider.printerConfig!
-                                .supportedPaperWidths
-                                .map((width) => DropdownMenuItem(
-                                      value: width,
-                                      child: Text('$width mm'),
-                                    ))
-                                .toList(),
-                            onChanged: (value) {
-                              setState(() {
-                                _selectedPaperWidth = value;
-                              });
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                // File Selection
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _isBatchMode ? 'Pilih Multiple Files' : 'Pilih File',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        ElevatedButton.icon(
-                          onPressed: _pickFile,
-                          icon: const Icon(Icons.folder_open),
-                          label: Text(_isBatchMode
-                              ? 'Pilih Multiple Files'
-                              : 'Pilih File'),
-                          style: ElevatedButton.styleFrom(
-                            minimumSize: const Size(double.infinity, 48),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        if (_selectedFile != null) ...[
-                          ListTile(
-                            leading: const Icon(Icons.insert_drive_file),
-                            title: Text(_selectedFile!.path.split('/').last),
-                            subtitle: Text(
-                              '${(_selectedFile!.lengthSync() / 1024).toStringAsFixed(1)} KB',
-                            ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.close),
-                              onPressed: _clearSelection,
-                            ),
-                          ),
-                        ] else if (_selectedFiles.isNotEmpty) ...[
-                          ListTile(
-                            leading: const Icon(Icons.folder),
-                            title: Text('${_selectedFiles.length} files'),
-                            subtitle: Text(
-                              _selectedFiles
-                                  .map((f) => f.path.split('/').last)
-                                  .join(', '),
-                            ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.close),
-                              onPressed: _clearSelection,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Preview Section (untuk image)
-                if (_showPreview && _previewImageBase64 != null) ...[
-                  const SizedBox(height: 16),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Preview',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Center(
-                            child: Image.memory(
-                              base64Decode(_previewImageBase64!),
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Text('Preview tidak tersedia');
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-
-                // Print Button
-                const SizedBox(height: 24),
+                _buildConnectionCard(context, provider),
+                const SizedBox(height: UiConstants.spacingMd),
+                if (provider.printerConfig != null) _buildPaperWidthCard(context, provider),
+                const SizedBox(height: UiConstants.spacingMd),
+                _buildCropModeCard(context),
+                const SizedBox(height: UiConstants.spacingMd),
+                _buildFilePickerCard(context),
+                const SizedBox(height: UiConstants.spacingMd),
+                if (_isPdf) _buildPdfPageGrid(context),
+                if (!_isPdf && _selectedFile != null) _buildImagePreview(context),
+                const SizedBox(height: UiConstants.spacingLg),
                 ElevatedButton(
                   onPressed: provider.isLoading ? null : _print,
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 56),
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                  ),
+                  style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 56)),
                   child: provider.isLoading
-                      ? const SizedBox(
-                          height: 24,
-                          width: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
-                            ),
-                          ),
-                        )
-                      : const Row(
+                      ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Colors.white)))
+                      : Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.print),
-                            SizedBox(width: 8),
-                            Text(
-                              'PRINT',
-                              style: TextStyle(fontSize: 18),
-                            ),
+                            const Icon(Icons.print),
+                            const SizedBox(width: 8),
+                            Text(_isPdf && _selectedPages.length > 1 ? 'PRINT ${_selectedPages.length} HALAMAN' : 'PRINT', style: const TextStyle(fontSize: 18)),
                           ],
                         ),
                 ),
-
-                // Info text
-                const SizedBox(height: 16),
+                const SizedBox(height: UiConstants.spacingMd),
                 Text(
                   'Support: PDF (Shopee/TikTok labels), PNG, JPG, BMP',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5), fontSize: 12),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -488,4 +309,242 @@ class _PrintScreenState extends State<PrintScreen> {
       ),
     );
   }
+
+  Widget _buildConnectionCard(BuildContext context, PrinterProvider provider) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(UiConstants.spacingMd),
+        child: Row(
+          children: [
+            Icon(provider.isConnected ? Icons.print : Icons.print_disabled, color: provider.isConnected ? AppTheme.successColor : Colors.grey),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(provider.isConnected ? 'Printer Terhubung' : 'Printer Tidak Terhubung', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text(provider.printerStatus?.transportType ?? 'Belum terhubung', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPaperWidthCard(BuildContext context, PrinterProvider provider) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(UiConstants.spacingMd),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Ukuran Kertas', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              initialValue: _selectedPaperWidth,
+              decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Lebar Kertas (mm)'),
+              items: provider.printerConfig!.supportedPaperWidths.map((w) => DropdownMenuItem(value: w, child: Text('$w mm'))).toList(),
+              onChanged: (value) async {
+                setState(() => _selectedPaperWidth = value);
+                if (_selectedFile != null && !_isPdf) await _generateImagePreview();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Toggle Smart Crop (auto-trim whitespace) vs Manual Crop (resize apa
+  /// adanya, tanpa trim) -- diminta agar user bisa pilih, tidak dipaksa
+  /// smart crop selalu.
+  Widget _buildCropModeCard(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(UiConstants.spacingMd),
+        child: Row(
+          children: [
+            Icon(_smartCrop ? Icons.auto_fix_high : Icons.crop, color: AppTheme.primaryColor),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_smartCrop ? 'Smart Crop' : 'Manual Crop', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    _smartCrop ? 'Otomatis potong margin/whitespace kosong' : 'Resize apa adanya, tanpa potong margin',
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            Switch(value: _smartCrop, onChanged: _onSmartCropChanged, activeThumbColor: AppTheme.primaryColor),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilePickerCard(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(UiConstants.spacingMd),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_isBatchMode ? 'Pilih Multiple Files' : 'Pilih File', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: _pickFile,
+              icon: const Icon(Icons.folder_open),
+              label: Text(_isBatchMode ? 'Pilih Multiple Files' : 'Pilih File'),
+              style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+            ),
+            const SizedBox(height: 12),
+            if (_selectedFile != null)
+              ListTile(
+                leading: const Icon(Icons.insert_drive_file),
+                title: Text(_selectedFile!.path.split(Platform.pathSeparator).last),
+                subtitle: Text('${(_selectedFile!.lengthSync() / 1024).toStringAsFixed(1)} KB'),
+                trailing: IconButton(icon: const Icon(Icons.close), onPressed: _clearSelection),
+              )
+            else if (_selectedFiles.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.folder),
+                title: Text('${_selectedFiles.length} files'),
+                subtitle: Text(_selectedFiles.map((f) => f.path.split(Platform.pathSeparator).last).join(', ')),
+                trailing: IconButton(icon: const Icon(Icons.close), onPressed: _clearSelection),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Grid thumbnail PDF -- select/deselect per halaman, GANTI dari dialog
+  /// ketik manual "1,2,3 atau 1-5" yang sebelumnya jadi satu-satunya cara
+  /// pilih halaman (dan tidak ada preview visualnya sama sekali).
+  Widget _buildPdfPageGrid(BuildContext context) {
+    if (_loadingThumbnails) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: UiConstants.spacingLg),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_pdfThumbnails.isEmpty) return const SizedBox.shrink();
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(UiConstants.spacingMd),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Pilih Halaman (${_selectedPages.length}/${_pdfThumbnails.length})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => setState(() => _selectedPages = _pdfThumbnails.map((t) => t.pageIndex).toSet()),
+                      child: const Text('Semua'),
+                    ),
+                    TextButton(
+                      onPressed: () => setState(() => _selectedPages = {}),
+                      child: const Text('Bersihkan'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.72),
+              itemCount: _pdfThumbnails.length,
+              itemBuilder: (context, i) {
+                final thumb = _pdfThumbnails[i];
+                final selected = _selectedPages.contains(thumb.pageIndex);
+                return GestureDetector(
+                  onTap: () => _togglePageSelection(thumb.pageIndex),
+                  child: Stack(
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: selected ? AppTheme.primaryColor : Colors.grey.withValues(alpha: 0.3), width: selected ? 3 : 1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Image.memory(thumb.bytes, fit: BoxFit.cover),
+                        ),
+                      ),
+                      Positioned(
+                        top: 4,
+                        left: 4,
+                        child: CircleAvatar(
+                          radius: 11,
+                          backgroundColor: selected ? AppTheme.primaryColor : Colors.black45,
+                          child: Text('${thumb.pageIndex + 1}', style: const TextStyle(fontSize: 11, color: Colors.white)),
+                        ),
+                      ),
+                      if (selected)
+                        const Positioned(
+                          bottom: 4,
+                          right: 4,
+                          child: CircleAvatar(radius: 10, backgroundColor: AppTheme.primaryColor, child: Icon(Icons.check, size: 14, color: Colors.white)),
+                        ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImagePreview(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(UiConstants.spacingMd),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Preview', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 12),
+            if (_isLoadingPreview)
+              const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+            else if (_previewImageBase64 != null)
+              Center(
+                child: Image.memory(
+                  base64Decode(_previewImageBase64!),
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => const Text('Preview tidak tersedia'),
+                ),
+              )
+            else
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text('Preview belum tersedia', style: TextStyle(color: Colors.grey[600])),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Helper kecil buat nyimpen hasil render thumbnail PDF beserta index
+/// halaman aslinya (0-indexed).
+class Uint8ListThumb {
+  final int pageIndex;
+  final Uint8List bytes;
+  Uint8ListThumb({required this.pageIndex, required this.bytes});
 }

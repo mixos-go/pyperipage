@@ -20,7 +20,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     
     <application
-        android:label="peripage"
+        android:label="PyPeriPage"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

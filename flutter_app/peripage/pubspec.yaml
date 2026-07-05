@@ -52,6 +52,16 @@ dependencies:
   # adb logcat sama sekali).
   share_plus: ^12.0.2
 
+  # Lottie -- animasi/ilustrasi "3D-style" (icon printer animasi, background
+  # dekoratif, avatar) dipakai di seluruh redesign UI/UX (bukan model 3D
+  # interaktif beneran, tapi animasi vektor ringan yang render konsisten di
+  # semua platform, termasuk desktop -- three.js/model_viewer tidak reliable
+  # di Windows/Linux desktop Flutter).
+  lottie: ^3.3.1
+
+  # Persist pilihan tema (Light/Dark/AMOLED) antar sesi.
+  shared_preferences: ^2.3.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -72,6 +82,7 @@ flutter:
 
   assets:
     - assets/icons/
+    - assets/lottie/
 
 # Konfigurasi flutter_launcher_icons -- generate icon ke SEMUA platform
 # sekaligus dari 1 source image, jadi tidak perlu bikin manual per-platform.

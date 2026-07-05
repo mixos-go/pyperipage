@@ -31,6 +31,8 @@ from peripage_a9 import protocol
 # Instance driver aktif (USB atau BLE), None kalau belum connect
 _driver = None
 _transport_type = "usb"
+_device_address = None  # MAC address BLE, atau None untuk USB
+_device_name = None  # Nama device BLE hasil scan, atau None
 
 
 def _err(e: Exception) -> dict:
@@ -40,7 +42,7 @@ def _err(e: Exception) -> dict:
 
 def connect_usb() -> dict:
     """Connect ke printer via USB. Menyesuaikan bentuk return ApiService.connectUsb()."""
-    global _driver, _transport_type
+    global _driver, _transport_type, _device_address, _device_name
     try:
         _transport_type = "usb"
         _driver = PeriPageA9USB()
@@ -48,14 +50,16 @@ def connect_usb() -> dict:
         if not ok:
             _driver = None
             return {"status": "error", "message": "Printer USB tidak ditemukan / gagal klaim endpoint."}
+        _device_address = None  # USB tidak punya konsep address kayak BLE MAC
+        _device_name = "PeriPage A9 (USB)"
         return {"status": "ok", "connected": True, "transport_type": "usb"}
     except Exception as e:
         return _err(e)
 
 
-def connect_ble(device_address: str = None) -> dict:
+def connect_ble(device_address: str = None, device_name: str = None) -> dict:
     """Connect ke printer via BLE. device_address boleh None (auto-discovery by name)."""
-    global _driver, _transport_type
+    global _driver, _transport_type, _device_address, _device_name
     try:
         _transport_type = "ble"
         _driver = PeriPageA9BLE(device_address=device_address)
@@ -63,6 +67,8 @@ def connect_ble(device_address: str = None) -> dict:
         if not ok:
             _driver = None
             return {"status": "error", "message": "Printer BLE tidak ditemukan / gagal connect."}
+        _device_address = device_address
+        _device_name = device_name or "Printer BLE"
         return {"status": "ok", "connected": True, "transport_type": "ble"}
     except Exception as e:
         return _err(e)
@@ -86,6 +92,8 @@ def get_printer_status() -> dict:
         "transport_type": _transport_type,
         "paper_width_mm": _driver.paper_width_mm if _driver else protocol.load_paper_width_mm(),
         "message": "Terhubung" if connected else "Belum terhubung",
+        "device_address": _device_address if connected else None,
+        "device_name": _device_name if connected else None,
     }
 
 
@@ -119,19 +127,23 @@ def _image_to_base64_png(img: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def preview_image(image_path: str, paper_width_mm: int = None) -> dict:
-    """Dipakai ApiService.previewImage() -- return base64 PNG hasil smart-crop,
-    TANPA mengirim apapun ke printer (murni preview)."""
+def preview_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = True) -> dict:
+    """Dipakai ApiService.previewImage() -- return base64 PNG hasil crop,
+    TANPA mengirim apapun ke printer (murni preview). `smart_crop=False`
+    kalau user pilih toggle "Manual Crop" di Print Screen."""
     try:
         width = paper_width_mm or (_driver.paper_width_mm if _driver else protocol.load_paper_width_mm())
         img = Image.open(image_path)
-        cropped = protocol.smart_crop_and_resize(img, width)
+        if smart_crop:
+            cropped = protocol.smart_crop_and_resize(img, width)
+        else:
+            cropped = protocol.resize_to_paper_width(img, width)
         return {"status": "ok", "image_base64": _image_to_base64_png(cropped)}
     except Exception as e:
         return _err(e)
 
 
-def print_image(image_path: str, paper_width_mm: int = None) -> dict:
+def print_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = True) -> dict:
     """Dipakai ApiService.printImage(File)."""
     global _driver
     if _driver is None:
@@ -140,14 +152,14 @@ def print_image(image_path: str, paper_width_mm: int = None) -> dict:
         if paper_width_mm:
             _driver.set_paper_width(paper_width_mm)
         img = Image.open(image_path)
-        cropped = _driver.smart_crop_and_resize(img)
+        cropped = _driver.smart_crop_and_resize(img, use_smart_crop=smart_crop)
         _driver.print_pages([0], {0: cropped})
         return {"status": "ok"}
     except Exception as e:
         return _err(e)
 
 
-def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None) -> dict:
+def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None, smart_crop: bool = True) -> dict:
     """
     Dipakai ApiService.printPdf(File, List<int> pages) di Android/iOS.
 
@@ -178,7 +190,7 @@ def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None) 
         cropped_images = {}
         for page_idx, img_path in zip(pages, image_paths):
             img = Image.open(img_path)
-            cropped_images[page_idx] = _driver.smart_crop_and_resize(img)
+            cropped_images[page_idx] = _driver.smart_crop_and_resize(img, use_smart_crop=smart_crop)
 
         _driver.print_pages(pages, cropped_images)
         return {"status": "ok"}
@@ -186,7 +198,7 @@ def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None) 
         return _err(e)
 
 
-def print_batch(file_paths: list, paper_width_mm: int = None) -> dict:
+def print_batch(file_paths: list, paper_width_mm: int = None, smart_crop: bool = True) -> dict:
     """Dipakai ApiService.printBatch(List<File>) -- cetak beberapa file gambar berurutan."""
     global _driver
     if _driver is None:
@@ -198,7 +210,7 @@ def print_batch(file_paths: list, paper_width_mm: int = None) -> dict:
         cropped_images = {}
         for idx, path in enumerate(file_paths):
             img = Image.open(path)
-            cropped_images[idx] = _driver.smart_crop_and_resize(img)
+            cropped_images[idx] = _driver.smart_crop_and_resize(img, use_smart_crop=smart_crop)
 
         _driver.print_pages(list(range(len(file_paths))), cropped_images)
         return {"status": "ok"}
@@ -207,11 +219,13 @@ def print_batch(file_paths: list, paper_width_mm: int = None) -> dict:
 
 
 def disconnect_printer() -> dict:
-    global _driver
+    global _driver, _device_address, _device_name
     if _driver and getattr(_driver, "_transport", None):
         try:
             _driver._transport.close()
         except Exception:
             pass
     _driver = None
+    _device_address = None
+    _device_name = None
     return {"status": "ok"}
