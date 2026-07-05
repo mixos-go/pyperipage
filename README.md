@@ -1,5 +1,9 @@
 # 🖨️ PeriPage A9 - Modern Multi-Platform App
 
+<p align="center">
+  <img src="readme_icon_original.png" alt="PeriPage A9 Icon" width="160">
+</p>
+
 Aplikasi print modern untuk printer thermal **PeriPage A9** dengan dukungan multi-platform:
 - **Desktop**: Windows, macOS, Linux (via USB)
 - **Mobile**: Android, iOS (via Bluetooth BLE)

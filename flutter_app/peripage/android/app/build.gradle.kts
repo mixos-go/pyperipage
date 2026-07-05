@@ -37,6 +37,13 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // WAJIB ada -- tanpa ini, proguard-rules.pro tidak pernah dibaca R8
+            // sama sekali walau file-nya ada, dan bug "No module named 'com'"
+            // akan terus terjadi karena R8 tetap default-nya obfuscate semua.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

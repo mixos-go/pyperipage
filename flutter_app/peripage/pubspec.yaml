@@ -57,5 +57,55 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
 
+  # App icon generator lintas platform (Android/iOS/macOS/Windows/Linux/web)
+  # -- source icon: assets/icons/app_icon_circle.png (sudah di-crop lingkaran).
+  # Jalankan: dart run flutter_launcher_icons
+  flutter_launcher_icons: ^0.14.3
+
+  # Splash screen generator (Android 12+ splash API & legacy splash utk
+  # iOS/Android lama) -- pakai icon yang sama biar konsisten.
+  # Jalankan: dart run flutter_native_splash:create
+  flutter_native_splash: ^2.4.4
+
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/icons/
+
+# Konfigurasi flutter_launcher_icons -- generate icon ke SEMUA platform
+# sekaligus dari 1 source image, jadi tidak perlu bikin manual per-platform.
+flutter_launcher_icons:
+  android: true
+  ios: true
+  macos:
+    generate: true
+    image_path: "assets/icons/app_icon_circle.png"
+  windows:
+    generate: true
+    image_path: "assets/icons/app_icon_circle.png"
+    icon_size: 256
+  image_path: "assets/icons/app_icon_circle.png"
+  min_sdk_android: 21
+  # Adaptive icon Android (foreground+background terpisah, wajib Android 8+)
+  # -- background putih solid biar konsisten sama halo di icon aslinya.
+  adaptive_icon_background: "#FFFFFF"
+  # Pakai versi dengan padding safe-zone (66%) khusus, BUKAN file yang sama
+  # dengan icon_path -- adaptive icon Android bisa kepotong system mask/
+  # animasi kalau logo mengisi penuh kanvas tanpa padding.
+  adaptive_icon_foreground: "assets/icons/app_icon_adaptive_fg.png"
+  remove_alpha_ios: true # Apple wajib icon tanpa alpha channel
+
+# Konfigurasi flutter_native_splash -- splash screen pas app dibuka,
+# background putih + logo di tengah, konsisten sama warna brand (biru).
+flutter_native_splash:
+  color: "#FFFFFF"
+  image: assets/icons/app_icon_circle.png
+  color_dark: "#0D1117"
+  image_dark: assets/icons/app_icon_circle.png
+  android_12:
+    image: assets/icons/app_icon_circle.png
+    color: "#FFFFFF"
+    image_dark: assets/icons/app_icon_circle.png
+    color_dark: "#0D1117"
+  web: false
