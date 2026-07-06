@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:pdfx/pdfx.dart';
+import 'package:lottie/lottie.dart';
 import '../../providers/printer_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/constants.dart';
@@ -218,6 +219,7 @@ class _PrintScreenState extends State<PrintScreen> {
       }
 
       if (success) {
+        _showSuccessAnimation();
         _showSuccess('Print berhasil!');
         _clearSelection();
       } else {
@@ -241,6 +243,35 @@ class _PrintScreenState extends State<PrintScreen> {
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: AppTheme.errorColor));
+  }
+
+  /// Overlay animasi centang hijau singkat (auto-dismiss) setelah print
+  /// sukses -- feedback visual yang lebih hidup daripada SnackBar polos.
+  void _showSuccessAnimation() {
+    if (!mounted) return;
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'success',
+      barrierColor: Colors.black26,
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (dialogContext, anim1, anim2) {
+        Future.delayed(const Duration(milliseconds: 1100), () {
+          if (Navigator.of(dialogContext).canPop()) Navigator.of(dialogContext).pop();
+        });
+        return Center(
+          child: SizedBox(
+            width: 140,
+            height: 140,
+            child: Lottie.asset(
+              'assets/lottie/success_check.json',
+              repeat: false,
+              errorBuilder: (c, e, s) => const Icon(Icons.check_circle, color: AppTheme.successColor, size: 100),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _showSuccess(String message) {
@@ -286,7 +317,14 @@ class _PrintScreenState extends State<PrintScreen> {
                   onPressed: provider.isLoading ? null : _print,
                   style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 56)),
                   child: provider.isLoading
-                      ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Colors.white)))
+                      ? SizedBox(
+                          height: 40,
+                          width: 60,
+                          child: Lottie.asset(
+                            'assets/lottie/printer_printing.json',
+                            errorBuilder: (c, e, s) => const CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Colors.white)),
+                          ),
+                        )
                       : Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [

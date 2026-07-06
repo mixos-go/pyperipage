@@ -80,8 +80,10 @@ class WorkspaceScreen extends StatelessWidget {
   }
 
   Future<void> _handleScanBle(BuildContext context, PrinterProvider provider) async {
+    _showScanningDialog(context);
     await provider.discoverBleDevices();
     if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // tutup dialog scanning
     if (provider.errorMessage != null) {
       _showSnackBar(context, provider.errorMessage!, isError: true, details: provider.errorDetails);
       return;
@@ -91,6 +93,33 @@ class WorkspaceScreen extends StatelessWidget {
       return;
     }
     _showBleDevicePicker(context, provider);
+  }
+
+  void _showScanningDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => Dialog(
+        child: Padding(
+          padding: const EdgeInsets.all(UiConstants.spacingLg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 120,
+                height: 120,
+                child: Lottie.asset(
+                  'assets/lottie/bluetooth_scan_pulse.json',
+                  errorBuilder: (c, e, s) => const CircularProgressIndicator(),
+                ),
+              ),
+              const SizedBox(height: UiConstants.spacingMd),
+              const Text('Mencari printer BLE di sekitar...'),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showBleDevicePicker(BuildContext context, PrinterProvider provider) {
@@ -545,21 +574,42 @@ class _WorkspaceDrawer extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(UiConstants.spacingLg),
-              decoration: const BoxDecoration(gradient: AppTheme.primaryGradient),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            ClipRect(
+              child: Stack(
                 children: [
-                  CircleAvatar(
-                    radius: 28,
-                    backgroundColor: Colors.white,
-                    child: Icon(Icons.print, color: AppTheme.primaryColor, size: 28),
+                  Positioned(
+                    right: -60,
+                    top: -60,
+                    child: SizedBox(
+                      width: 220,
+                      height: 220,
+                      child: Opacity(
+                        opacity: 0.25,
+                        child: Lottie.asset(
+                          'assets/lottie/gradient_blob_bg.json',
+                          errorBuilder: (c, e, s) => const SizedBox.shrink(),
+                        ),
+                      ),
+                    ),
                   ),
-                  SizedBox(height: UiConstants.spacingSm),
-                  Text('PyPeriPage', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                  Text('PeriPage A9 Printer', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(UiConstants.spacingLg),
+                    decoration: const BoxDecoration(gradient: AppTheme.primaryGradient),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        CircleAvatar(
+                          radius: 28,
+                          backgroundColor: Colors.white,
+                          child: Icon(Icons.print, color: AppTheme.primaryColor, size: 28),
+                        ),
+                        SizedBox(height: UiConstants.spacingSm),
+                        Text('PyPeriPage', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                        Text('PeriPage A9 Printer', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
