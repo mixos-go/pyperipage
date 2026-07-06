@@ -32,6 +32,7 @@ yang dulu dipakai buat `bleak` (yang async) SUDAH TIDAK DIPERLUKAN LAGI --
 class di sini langsung synchronous dari awal, jadi lebih simpel.
 """
 from typing import Optional
+import json
 
 from com.pyperipage import NativeBleTransport
 
@@ -74,12 +75,22 @@ class BleTransportSync:
         """
         timeout_ms = int(timeout * 1000)
         try:
-            devices = self._native.discoverDevices(timeout_ms)
+            # NativeBleTransport.discoverDevices() sekarang return STRING JSON
+            # (bukan List<Map> Kotlin mentah) -- fix Juli 2026, lihat komentar
+            # panjang di NativeBleTransport.kt. Iterasi objek Java/Kotlin lewat
+            # Chaquopy reflection rawan rusak kalau R8 me-rename class internal
+            # (muncul sebagai "'l' object is not iterable" -- 'l' itu literally
+            # nama class hasil obfuscation). json.loads() di sini SAMA SEKALI
+            # tidak menyentuh objek Java apa pun, jadi kebal dari masalah itu.
+            json_str = self._native.discoverDevices(timeout_ms)
+            devices = json.loads(str(json_str))
         except Exception as e:
             raise TransportError(f"Gagal scanning BLE: {e}")
 
-        # PyObject list-of-map dari Kotlin -> list of dict Python biasa.
-        return [dict(d) for d in devices]
+        # json.loads() sudah menghasilkan list of dict Python murni --
+        # tidak perlu konversi tambahan (beda dari versi lama yang masih
+        # perlu dict(d) buat objek Kotlin Map mentah).
+        return devices
 
     def connect(self, timeout: float = 10.0) -> 'BleTransportSync':
         """

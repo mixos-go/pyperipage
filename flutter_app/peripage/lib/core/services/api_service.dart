@@ -54,7 +54,14 @@ class ApiService {
       final jsonStr = await _channel.invokeMethod<String>(method, args);
       final data = json.decode(jsonStr ?? '{}') as Map<String, dynamic>;
       if (data['status'] == 'error') {
-        throw Exception(data['message'] ?? 'Terjadi kesalahan pada printer.');
+        appLog('ApiService', '❌ Error dari python_service (method "$method"): ${data['message']}');
+        if (data['details'] != null) {
+          appLog('ApiService', '❌ Traceback Python:\n${data['details']}');
+        }
+        throw NativeCallException(
+          data['message'] ?? 'Terjadi kesalahan pada printer.',
+          details: data['details'] as String?,
+        );
       }
       return data;
     } on PlatformException catch (e) {

@@ -11,6 +11,8 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
 import android.os.Build
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -69,22 +71,33 @@ object NativeBleTransport {
      * SEMUA device BLE yang punya nama (tidak difilter cuma nama "PeriPage"),
      * supaya user bisa connect ke printer merk/UUID apa pun, bukan cuma
      * PeriPage.
+     *
+     * PENTING (fix Juli 2026): return String JSON, BUKAN List<Map<String, Any?>>
+     * langsung. Sebelumnya Python (transport_ble.py) melakukan
+     * `[dict(d) for d in devices]` -- iterasi objek Kotlin Map lewat
+     * reflection Chaquopy. R8 (SELALU aktif di build release Flutter,
+     * lihat proguard-rules.pro) me-rename class internal Map/List Kotlin,
+     * membuat Chaquopy gagal proxy objeknya dengan benar dan Python
+     * melempar "'l' object is not iterable" (huruf 1 karakter itu literally
+     * nama class HASIL OBFUSCATION). String JSON sama sekali tidak butuh
+     * Chaquopy introspeksi objek Java/Kotlin apa pun -- cuma teks murni,
+     * jadi kebal dari masalah rename class oleh R8.
      */
-    fun discoverDevices(timeoutMs: Long): List<Map<String, Any?>> {
+    fun discoverDevices(timeoutMs: Long): String {
         val scanner = bluetoothAdapter.bluetoothLeScanner
-            ?: return emptyList()
-        val found = ConcurrentHashMap<String, Map<String, Any?>>()
+            ?: return "[]"
+        val found = ConcurrentHashMap<String, JSONObject>()
 
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val device = result.device
                 val name = try { device.name } catch (e: SecurityException) { null }
                 if (name.isNullOrBlank()) return // device tanpa nama sulit dikenali user, skip
-                found[device.address] = mapOf(
-                    "name" to name,
-                    "address" to device.address,
-                    "rssi" to result.rssi
-                )
+                val obj = JSONObject()
+                obj.put("name", name)
+                obj.put("address", device.address)
+                obj.put("rssi", result.rssi)
+                found[device.address] = obj
             }
         }
 
@@ -92,7 +105,7 @@ object NativeBleTransport {
             scanner.startScan(callback)
             Thread.sleep(timeoutMs)
         } catch (e: SecurityException) {
-            return emptyList() // permission BLUETOOTH_SCAN belum di-grant
+            return "[]" // permission BLUETOOTH_SCAN belum di-grant
         } finally {
             try {
                 scanner.stopScan(callback)
@@ -101,7 +114,9 @@ object NativeBleTransport {
             }
         }
 
-        return found.values.toList()
+        val array = JSONArray()
+        for (obj in found.values) array.put(obj)
+        return array.toString()
     }
 
     /**

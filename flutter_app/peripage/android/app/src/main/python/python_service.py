@@ -36,8 +36,14 @@ _device_name = None  # Nama device BLE hasil scan, atau None
 
 
 def _err(e: Exception) -> dict:
-    traceback.print_exc()
-    return {"status": "error", "message": str(e)}
+    tb = traceback.format_exc()
+    print(tb)
+    # PENTING: sertakan traceback lengkap di response, BUKAN cuma print ke
+    # logcat (yang percuma tanpa adb). Ini yang bikin "Lihat Detail" &
+    # Log Aplikasi di UI sebelumnya SELALU kosong untuk error jenis ini
+    # (beda dari error native Kotlin/PlatformException yang sudah benar
+    # menyertakan stack trace).
+    return {"status": "error", "message": str(e), "details": tb}
 
 
 def connect_usb() -> dict:
