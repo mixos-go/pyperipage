@@ -94,6 +94,30 @@ class BleDevice {
   }
 }
 
+/// Rect crop manual (dari Manual Crop Editor), koordinat ternormalisasi
+/// 0.0-1.0 relatif ke gambar ASLI (bukan pixel) -- supaya konsisten dipakai
+/// baik untuk thumbnail preview maupun gambar resolusi penuh saat print.
+class CropRect {
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+
+  const CropRect({
+    this.left = 0.0,
+    this.top = 0.0,
+    this.right = 1.0,
+    this.bottom = 1.0,
+  });
+
+  Map<String, double> toJson() => {'left': left, 'top': top, 'right': right, 'bottom': bottom};
+
+  /// Crop rect default (seluruh gambar, tidak ada crop).
+  static const CropRect full = CropRect();
+
+  bool get isFullImage => left == 0.0 && top == 0.0 && right == 1.0 && bottom == 1.0;
+}
+
 /// Model untuk print job
 class PrintJob {
   final String filePath;

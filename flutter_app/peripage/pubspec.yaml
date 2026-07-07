@@ -59,6 +59,11 @@ dependencies:
   # di Windows/Linux desktop Flutter).
   lottie: ^3.3.1
 
+  # Manual Crop Editor -- drag/pinch buat pilih area crop sendiri, pure-Dart
+  # (bukan native platform view), jadi jalan di semua platform termasuk
+  # desktop Windows/Linux (beda dengan image_cropper yang cuma mobile).
+  crop_your_image: ^1.1.0
+
   # Persist pilihan tema (Light/Dark/AMOLED) antar sesi.
   shared_preferences: ^2.3.3
 

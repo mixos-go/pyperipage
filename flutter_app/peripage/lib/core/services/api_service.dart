@@ -230,12 +230,13 @@ class ApiService {
     }
   }
 
-  Future<String> previewImage(File imageFile, {int? paperWidthMm, bool smartCrop = true}) async {
+  Future<String> previewImage(File imageFile, {int? paperWidthMm, bool smartCrop = true, CropRect? cropRect}) async {
     if (_isMobile) {
       final data = await _invokeNative('previewImage', {
         'imagePath': imageFile.path,
         'paperWidthMm': paperWidthMm,
         'smartCrop': smartCrop,
+        'cropRect': cropRect?.toJson(),
       });
       return data['image_base64'] as String;
     }
@@ -246,6 +247,12 @@ class ApiService {
 
     request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
     request.fields['smart_crop'] = smartCrop.toString();
+    if (cropRect != null && !cropRect.isFullImage) {
+      request.fields['crop_left'] = cropRect.left.toString();
+      request.fields['crop_top'] = cropRect.top.toString();
+      request.fields['crop_right'] = cropRect.right.toString();
+      request.fields['crop_bottom'] = cropRect.bottom.toString();
+    }
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();
@@ -261,12 +268,13 @@ class ApiService {
     }
   }
 
-  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true}) async {
+  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true, CropRect? cropRect}) async {
     if (_isMobile) {
       await _invokeNative('printImage', {
         'imagePath': imageFile.path,
         'paperWidthMm': paperWidthMm,
         'smartCrop': smartCrop,
+        'cropRect': cropRect?.toJson(),
       });
       return true;
     }
@@ -277,6 +285,12 @@ class ApiService {
 
     request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
     request.fields['smart_crop'] = smartCrop.toString();
+    if (cropRect != null && !cropRect.isFullImage) {
+      request.fields['crop_left'] = cropRect.left.toString();
+      request.fields['crop_top'] = cropRect.top.toString();
+      request.fields['crop_right'] = cropRect.right.toString();
+      request.fields['crop_bottom'] = cropRect.bottom.toString();
+    }
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();
@@ -331,7 +345,7 @@ class ApiService {
     return imagePaths;
   }
 
-  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true}) async {
+  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects}) async {
     if (_isMobile) {
       // Rasterisasi PDF->gambar di Dart (pdfx/PDFium) dulu, karena
       // python_service.py di Android tidak bisa pasang PyMuPDF (fitz) --
@@ -344,6 +358,7 @@ class ApiService {
         'pages': pages,
         'paperWidthMm': paperWidthMm,
         'smartCrop': smartCrop,
+        'cropRects': cropRects?.map((k, v) => MapEntry(k.toString(), v.toJson())),
       });
       return true;
     }
@@ -355,6 +370,9 @@ class ApiService {
     request.files.add(await http.MultipartFile.fromPath('pdf_file', pdfFile.path));
     request.fields['pages'] = pages.join(',');
     request.fields['smart_crop'] = smartCrop.toString();
+    if (cropRects != null && cropRects.isNotEmpty) {
+      request.fields['crop_rects_json'] = json.encode(cropRects.map((k, v) => MapEntry(k.toString(), v.toJson())));
+    }
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();
@@ -370,12 +388,13 @@ class ApiService {
     }
   }
 
-  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true}) async {
+  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects}) async {
     if (_isMobile) {
       await _invokeNative('printBatch', {
         'filePaths': files.map((f) => f.path).toList(),
         'paperWidthMm': paperWidthMm,
         'smartCrop': smartCrop,
+        'cropRects': cropRects?.map((k, v) => MapEntry(k.toString(), v.toJson())),
       });
       return true;
     }
@@ -388,6 +407,9 @@ class ApiService {
       request.files.add(await http.MultipartFile.fromPath('files', file.path));
     }
     request.fields['smart_crop'] = smartCrop.toString();
+    if (cropRects != null && cropRects.isNotEmpty) {
+      request.fields['crop_rects_json'] = json.encode(cropRects.map((k, v) => MapEntry(k.toString(), v.toJson())));
+    }
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();

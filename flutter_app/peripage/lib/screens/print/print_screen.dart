@@ -9,6 +9,8 @@ import 'package:lottie/lottie.dart';
 import '../../providers/printer_provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/constants.dart';
+import '../../data/models/printer_models.dart';
+import '../crop/manual_crop_screen.dart';
 
 /// Print Screen - Fitur utama untuk print PDF, Gambar, dan Label.
 ///
@@ -35,6 +37,7 @@ class _PrintScreenState extends State<PrintScreen> {
   late bool _isBatchMode;
   int? _selectedPaperWidth;
   bool _smartCrop = true;
+  Map<int, CropRect> _manualCrops = {}; // index -> crop rect (0-1 normalized)
 
   // PDF page selection
   List<Uint8ListThumb> _pdfThumbnails = [];
@@ -152,6 +155,7 @@ class _PrintScreenState extends State<PrintScreen> {
         _selectedFile!,
         paperWidthMm: _selectedPaperWidth,
         smartCrop: _smartCrop,
+        cropRect: _smartCrop ? null : _manualCrops[0],
       );
       if (!mounted) return;
       setState(() => _previewImageBase64 = preview);
@@ -197,7 +201,12 @@ class _PrintScreenState extends State<PrintScreen> {
       bool success = false;
 
       if (_isBatchMode && _selectedFiles.isNotEmpty) {
-        success = await provider.printBatch(_selectedFiles, paperWidthMm: _selectedPaperWidth, smartCrop: _smartCrop);
+        success = await provider.printBatch(
+          _selectedFiles,
+          paperWidthMm: _selectedPaperWidth,
+          smartCrop: _smartCrop,
+          cropRects: _smartCrop ? null : _manualCrops,
+        );
         if (success) {
           for (final f in _selectedFiles) {
             await provider.recordRecentFile(path: f.path, name: f.path.split(Platform.pathSeparator).last, type: 'batch');
@@ -206,12 +215,23 @@ class _PrintScreenState extends State<PrintScreen> {
       } else if (_selectedFile != null) {
         if (_isPdf) {
           final pages = _selectedPages.toList()..sort();
-          success = await provider.printPdf(_selectedFile!, pages, paperWidthMm: _selectedPaperWidth, smartCrop: _smartCrop);
+          success = await provider.printPdf(
+            _selectedFile!,
+            pages,
+            paperWidthMm: _selectedPaperWidth,
+            smartCrop: _smartCrop,
+            cropRects: _smartCrop ? null : _manualCrops,
+          );
           if (success) {
             await provider.recordRecentFile(path: _selectedFile!.path, name: _selectedFile!.path.split(Platform.pathSeparator).last, type: 'pdf');
           }
         } else {
-          success = await provider.printImage(_selectedFile!, paperWidthMm: _selectedPaperWidth, smartCrop: _smartCrop);
+          success = await provider.printImage(
+            _selectedFile!,
+            paperWidthMm: _selectedPaperWidth,
+            smartCrop: _smartCrop,
+            cropRect: _smartCrop ? null : _manualCrops[0],
+          );
           if (success) {
             await provider.recordRecentFile(path: _selectedFile!.path, name: _selectedFile!.path.split(Platform.pathSeparator).last, type: 'image');
           }
@@ -230,6 +250,76 @@ class _PrintScreenState extends State<PrintScreen> {
     }
   }
 
+  /// Dipanggil dalam mode "Manual Crop" -- buka ManualCropScreen dengan
+  /// gambar yang sesuai (single file / thumbnail tiap halaman PDF yang
+  /// terpilih / tiap file batch), lalu simpan hasil crop rect per halaman.
+  Future<void> _openManualCropEditor() async {
+    List<Uint8List> images = [];
+    List<String> labels = [];
+    Map<int, CropRect> initial = {};
+
+    if (_isBatchMode && _selectedFiles.isNotEmpty) {
+      for (int i = 0; i < _selectedFiles.length; i++) {
+        try {
+          images.add(await _selectedFiles[i].readAsBytes());
+          labels.add(_selectedFiles[i].path.split(Platform.pathSeparator).last);
+        } catch (_) {
+          // File PDF di batch tidak didukung editor crop (butuh render dulu) -- skip.
+        }
+      }
+      initial = _manualCrops;
+    } else if (_isPdf && _pdfThumbnails.isNotEmpty) {
+      final selected = _selectedPages.toList()..sort();
+      if (selected.isEmpty) {
+        _showError('Pilih minimal 1 halaman dulu sebelum edit crop.');
+        return;
+      }
+      for (final pageIdx in selected) {
+        final thumb = _pdfThumbnails.firstWhere((t) => t.pageIndex == pageIdx);
+        images.add(thumb.bytes);
+        labels.add('Halaman ${pageIdx + 1}');
+      }
+      // Map index lokal (posisi di `images`) -> pageIdx asli, supaya hasil
+      // crop tersimpan dengan key page index yang benar.
+      final localToPage = {for (int i = 0; i < selected.length; i++) i: selected[i]};
+      for (final entry in localToPage.entries) {
+        if (_manualCrops.containsKey(entry.value)) initial[entry.key] = _manualCrops[entry.value]!;
+      }
+      final result = await Navigator.push<Map<int, CropRect>>(
+        context,
+        MaterialPageRoute(builder: (_) => ManualCropScreen(images: images, labels: labels, initialCrops: initial)),
+      );
+      if (result != null) {
+        setState(() {
+          for (final entry in result.entries) {
+            _manualCrops[localToPage[entry.key]!] = entry.value;
+          }
+        });
+        _showSuccess('Crop manual disimpan untuk ${result.length} halaman.');
+      }
+      return;
+    } else if (_selectedFile != null) {
+      images.add(await _selectedFile!.readAsBytes());
+      labels.add(_selectedFile!.path.split(Platform.pathSeparator).last);
+      initial = _manualCrops;
+    } else {
+      _showError('Pilih file terlebih dahulu.');
+      return;
+    }
+
+    if (images.isEmpty) return;
+
+    final result = await Navigator.push<Map<int, CropRect>>(
+      context,
+      MaterialPageRoute(builder: (_) => ManualCropScreen(images: images, labels: labels, initialCrops: initial)),
+    );
+    if (result != null) {
+      setState(() => _manualCrops = result);
+      _showSuccess('Crop manual disimpan.');
+      if (!_isPdf && !_isBatchMode) await _generateImagePreview();
+    }
+  }
+
   void _clearSelection() {
     setState(() {
       _selectedFile = null;
@@ -237,6 +327,7 @@ class _PrintScreenState extends State<PrintScreen> {
       _previewImageBase64 = null;
       _pdfThumbnails = [];
       _selectedPages = {};
+      _manualCrops = {};
     });
   }
 
@@ -399,26 +490,43 @@ class _PrintScreenState extends State<PrintScreen> {
   /// adanya, tanpa trim) -- diminta agar user bisa pilih, tidak dipaksa
   /// smart crop selalu.
   Widget _buildCropModeCard(BuildContext context) {
+    final hasFile = _selectedFile != null || _selectedFiles.isNotEmpty;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(UiConstants.spacingMd),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(_smartCrop ? Icons.auto_fix_high : Icons.crop, color: AppTheme.primaryColor),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(_smartCrop ? 'Smart Crop' : 'Manual Crop', style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Text(
-                    _smartCrop ? 'Otomatis potong margin/whitespace kosong' : 'Resize apa adanya, tanpa potong margin',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            Row(
+              children: [
+                Icon(_smartCrop ? Icons.auto_fix_high : Icons.crop, color: AppTheme.primaryColor),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_smartCrop ? 'Smart Crop' : 'Manual Crop', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Text(
+                        _smartCrop ? 'Otomatis potong margin/whitespace kosong' : 'Resize apa adanya, tanpa potong margin',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                Switch(value: _smartCrop, onChanged: _onSmartCropChanged, activeThumbColor: AppTheme.primaryColor),
+              ],
             ),
-            Switch(value: _smartCrop, onChanged: _onSmartCropChanged, activeThumbColor: AppTheme.primaryColor),
+            if (!_smartCrop) ...[
+              const SizedBox(height: UiConstants.spacingSm),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: hasFile ? _openManualCropEditor : null,
+                  icon: const Icon(Icons.crop_free),
+                  label: Text(_manualCrops.isEmpty ? 'Edit Crop Manual' : 'Edit Crop Manual (${_manualCrops.length} diatur)'),
+                ),
+              ),
+            ],
           ],
         ),
       ),

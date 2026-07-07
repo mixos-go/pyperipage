@@ -106,14 +106,16 @@ class MainActivity: FlutterActivity() {
                     val imagePath = call.argument<String>("imagePath")
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
                     val smartCrop = call.argument<Boolean>("smartCrop") ?: true
-                    handlePythonCall("preview_image", result, imagePath, paperWidthMm, smartCrop)
+                    val cropRect = call.argument<Map<String, Any?>>("cropRect")
+                    handlePythonCall("preview_image", result, imagePath, paperWidthMm, smartCrop, cropRect)
                 }
 
                 "printImage" -> {
                     val imagePath = call.argument<String>("imagePath")
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
                     val smartCrop = call.argument<Boolean>("smartCrop") ?: true
-                    handlePythonCall("print_image", result, imagePath, paperWidthMm, smartCrop)
+                    val cropRect = call.argument<Map<String, Any?>>("cropRect")
+                    handlePythonCall("print_image", result, imagePath, paperWidthMm, smartCrop, cropRect)
                 }
 
                 "printPdfPages" -> {
@@ -124,14 +126,16 @@ class MainActivity: FlutterActivity() {
                     val pages = call.argument<List<Int>>("pages") ?: listOf()
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
                     val smartCrop = call.argument<Boolean>("smartCrop") ?: true
-                    handlePythonCall("print_pdf_pages", result, imagePaths, pages, paperWidthMm, smartCrop)
+                    val cropRects = call.argument<Map<String, Any?>>("cropRects")
+                    handlePythonCall("print_pdf_pages", result, imagePaths, pages, paperWidthMm, smartCrop, cropRects)
                 }
 
                 "printBatch" -> {
                     val filePaths = call.argument<List<String>>("filePaths") ?: listOf()
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
                     val smartCrop = call.argument<Boolean>("smartCrop") ?: true
-                    handlePythonCall("print_batch", result, filePaths, paperWidthMm, smartCrop)
+                    val cropRects = call.argument<Map<String, Any?>>("cropRects")
+                    handlePythonCall("print_batch", result, filePaths, paperWidthMm, smartCrop, cropRects)
                 }
 
                 else -> {
@@ -165,6 +169,17 @@ class MainActivity: FlutterActivity() {
                         is List<*> -> {
                             val jsonArr = JSONArray(arg)
                             py.getModule("json").callAttr("loads", jsonArr.toString())
+                        }
+                        // PENTING: Map JUGA harus lewat JSON string, bukan
+                        // diteruskan sebagai objek Kotlin mentah -- pelajaran
+                        // dari bug "'l' object is not iterable" (BLE, Juli
+                        // 2026): R8 selalu obfuscate class di release build,
+                        // dan reflection Chaquopy ke objek Kotlin/Java bisa
+                        // rusak kalau nama class-nya sudah di-rename. String
+                        // JSON sama sekali tidak butuh introspeksi objek.
+                        is Map<*, *> -> {
+                            val jsonObj = JSONObject(arg as Map<String, Any?>)
+                            py.getModule("json").callAttr("loads", jsonObj.toString())
                         }
                         else -> arg
                     }

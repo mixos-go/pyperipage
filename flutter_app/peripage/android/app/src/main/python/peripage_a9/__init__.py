@@ -13,6 +13,8 @@ from .protocol import (
     save_paper_width_mm,
     get_paper_dimensions,
     smart_crop_and_resize,
+    resize_to_paper_width,
+    crop_to_rect,
 )
 from .transport_usb import UsbTransport, TransportError as UsbTransportError
 from .transport_ble import BleTransport, TransportError as BleTransportError
@@ -31,4 +33,6 @@ __all__ = [
     "save_paper_width_mm",
     "get_paper_dimensions",
     "smart_crop_and_resize",
+    "resize_to_paper_width",
+    "crop_to_rect",
 ]

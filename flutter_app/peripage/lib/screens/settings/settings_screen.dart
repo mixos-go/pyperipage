@@ -5,6 +5,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/theme_controller.dart';
 import '../../core/utils/constants.dart';
 import '../logs/log_viewer_screen.dart';
+import '../ble/ble_scan_screen.dart';
 
 /// Settings Screen - Pengaturan printer & informasi aplikasi.
 ///
@@ -37,49 +38,7 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<void> _handleScanBle(BuildContext context, PrinterProvider provider) async {
-    await provider.discoverBleDevices();
-    if (!context.mounted) return;
-    if (provider.errorMessage != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(provider.errorMessage!), backgroundColor: AppTheme.errorColor),
-      );
-      return;
-    }
-    if (provider.bleDevices.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tidak ada device BLE ditemukan.')));
-      return;
-    }
-    if (!context.mounted) return;
-    showModalBottomSheet(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(UiConstants.spacingMd),
-              child: Text('Pilih Printer BLE', style: Theme.of(sheetContext).textTheme.titleMedium),
-            ),
-            ...provider.bleDevices.map((device) => ListTile(
-                  leading: const Icon(Icons.bluetooth),
-                  title: Text(device.name),
-                  subtitle: Text(device.address),
-                  onTap: () async {
-                    Navigator.pop(sheetContext);
-                    final success = await provider.connectBle(deviceAddress: device.address, deviceName: device.name);
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(success ? 'Terhubung ke ${device.name}.' : (provider.errorMessage ?? 'Gagal terhubung.')),
-                        backgroundColor: success ? AppTheme.successColor : AppTheme.errorColor,
-                      ),
-                    );
-                  },
-                )),
-          ],
-        ),
-      ),
-    );
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => const BleScanScreen()));
   }
 
   Future<void> _handleSetPaperWidth(BuildContext context, PrinterProvider provider, int width) async {

@@ -127,19 +127,30 @@ def set_paper_width(width_mm: int) -> dict:
         return _err(e)
 
 
+def _apply_manual_crop(img, crop_rect: dict = None):
+    """Terapkan crop rect manual dari Manual Crop Editor (UI) kalau ada.
+    crop_rect: {"left": float, "top": float, "right": float, "bottom": float} (0.0-1.0)."""
+    if crop_rect:
+        img = protocol.crop_to_rect(img, crop_rect["left"], crop_rect["top"], crop_rect["right"], crop_rect["bottom"])
+    return img
+
+
 def _image_to_base64_png(img: Image.Image) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def preview_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = True) -> dict:
+def preview_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = True, crop_rect: dict = None) -> dict:
     """Dipakai ApiService.previewImage() -- return base64 PNG hasil crop,
     TANPA mengirim apapun ke printer (murni preview). `smart_crop=False`
-    kalau user pilih toggle "Manual Crop" di Print Screen."""
+    kalau user pilih toggle "Manual Crop" di Print Screen. `crop_rect`
+    (opsional) dari Manual Crop Editor -- diterapkan SEBELUM smart/manual
+    resize."""
     try:
         width = paper_width_mm or (_driver.paper_width_mm if _driver else protocol.load_paper_width_mm())
         img = Image.open(image_path)
+        img = _apply_manual_crop(img, crop_rect)
         if smart_crop:
             cropped = protocol.smart_crop_and_resize(img, width)
         else:
@@ -149,7 +160,7 @@ def preview_image(image_path: str, paper_width_mm: int = None, smart_crop: bool 
         return _err(e)
 
 
-def print_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = True) -> dict:
+def print_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = True, crop_rect: dict = None) -> dict:
     """Dipakai ApiService.printImage(File)."""
     global _driver
     if _driver is None:
@@ -158,6 +169,7 @@ def print_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = 
         if paper_width_mm:
             _driver.set_paper_width(paper_width_mm)
         img = Image.open(image_path)
+        img = _apply_manual_crop(img, crop_rect)
         cropped = _driver.smart_crop_and_resize(img, use_smart_crop=smart_crop)
         _driver.print_pages([0], {0: cropped})
         return {"status": "ok"}
@@ -165,7 +177,7 @@ def print_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = 
         return _err(e)
 
 
-def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None, smart_crop: bool = True) -> dict:
+def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None, smart_crop: bool = True, crop_rects: dict = None) -> dict:
     """
     Dipakai ApiService.printPdf(File, List<int> pages) di Android/iOS.
 
@@ -196,6 +208,10 @@ def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None, 
         cropped_images = {}
         for page_idx, img_path in zip(pages, image_paths):
             img = Image.open(img_path)
+            # crop_rects (dari Manual Crop Editor) -- key JSON selalu string,
+            # walau page_idx aslinya int, makanya di-str() dulu buat lookup.
+            rect = (crop_rects or {}).get(str(page_idx))
+            img = _apply_manual_crop(img, rect)
             cropped_images[page_idx] = _driver.smart_crop_and_resize(img, use_smart_crop=smart_crop)
 
         _driver.print_pages(pages, cropped_images)
@@ -204,7 +220,7 @@ def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None, 
         return _err(e)
 
 
-def print_batch(file_paths: list, paper_width_mm: int = None, smart_crop: bool = True) -> dict:
+def print_batch(file_paths: list, paper_width_mm: int = None, smart_crop: bool = True, crop_rects: dict = None) -> dict:
     """Dipakai ApiService.printBatch(List<File>) -- cetak beberapa file gambar berurutan."""
     global _driver
     if _driver is None:
@@ -216,6 +232,8 @@ def print_batch(file_paths: list, paper_width_mm: int = None, smart_crop: bool =
         cropped_images = {}
         for idx, path in enumerate(file_paths):
             img = Image.open(path)
+            rect = (crop_rects or {}).get(str(idx))
+            img = _apply_manual_crop(img, rect)
             cropped_images[idx] = _driver.smart_crop_and_resize(img, use_smart_crop=smart_crop)
 
         _driver.print_pages(list(range(len(file_paths))), cropped_images)

@@ -12,6 +12,7 @@ import os
 import sys
 import io
 import base64
+import json
 import traceback
 import tempfile
 from typing import List, Optional, Dict, Any
@@ -35,6 +36,7 @@ from peripage_a9 import (
     save_paper_width_mm,
     smart_crop_and_resize,
     resize_to_paper_width,
+    crop_to_rect,
 )
 
 try:
@@ -279,11 +281,17 @@ async def get_paper_width():
 async def preview_image(
     image: UploadFile = File(...),
     paper_width_mm: Optional[int] = None,
-    smart_crop: bool = Form(True)
+    smart_crop: bool = Form(True),
+    crop_left: Optional[float] = Form(None),
+    crop_top: Optional[float] = Form(None),
+    crop_right: Optional[float] = Form(None),
+    crop_bottom: Optional[float] = Form(None),
 ):
     """
     Upload gambar dan dapatkan preview hasil crop (smart atau manual).
     Return: gambar yang sudah di-crop dan di-resize sesuai lebar kertas.
+    crop_left/top/right/bottom (opsional, 0.0-1.0): rect dari Manual Crop
+    Editor, diterapkan SEBELUM smart/manual resize.
     """
     try:
         # Baca gambar
@@ -293,6 +301,9 @@ async def preview_image(
         # Gunakan setting kertas saat ini jika tidak specified
         if paper_width_mm is None:
             paper_width_mm = load_paper_width_mm()
+
+        if crop_left is not None and crop_top is not None and crop_right is not None and crop_bottom is not None:
+            img = crop_to_rect(img, crop_left, crop_top, crop_right, crop_bottom)
         
         # Smart crop (auto-trim whitespace) ATAU manual (resize apa adanya)
         # -- toggle dari Print Screen.
@@ -313,7 +324,11 @@ async def preview_image(
 async def print_image(
     image: UploadFile = File(...),
     paper_width_mm: Optional[int] = Form(None),
-    smart_crop: bool = Form(True)
+    smart_crop: bool = Form(True),
+    crop_left: Optional[float] = Form(None),
+    crop_top: Optional[float] = Form(None),
+    crop_right: Optional[float] = Form(None),
+    crop_bottom: Optional[float] = Form(None),
 ):
     """Print gambar langsung."""
     try:
@@ -322,6 +337,9 @@ async def print_image(
         
         if paper_width_mm is None:
             paper_width_mm = load_paper_width_mm()
+
+        if crop_left is not None and crop_top is not None and crop_right is not None and crop_bottom is not None:
+            img = crop_to_rect(img, crop_left, crop_top, crop_right, crop_bottom)
         
         printer = get_printer()
         
@@ -351,11 +369,13 @@ async def print_pdf(
     pdf_file: UploadFile = File(...),
     pages: str = Form(...),  # Comma-separated page indices, e.g., "0,1,2"
     paper_width_mm: Optional[int] = Form(None),
-    smart_crop: bool = Form(True)
+    smart_crop: bool = Form(True),
+    crop_rects_json: Optional[str] = Form(None),  # JSON: {"0": {"left":.., "top":.., "right":.., "bottom":..}, ...}
 ):
     """
     Print PDF. 
     pages: string comma-separated index halaman (0-based), e.g., "0,1,2" untuk halaman 1,2,3
+    crop_rects_json: hasil Manual Crop Editor per halaman (opsional), key = index halaman (string).
     """
     if not PDF_SUPPORT:
         raise HTTPException(status_code=503, detail="PDF support tidak tersedia")
@@ -386,10 +406,15 @@ async def print_pdf(
                     raise HTTPException(status_code=400, detail="Gagal koneksi ke printer")
             
             # Smart/manual crop semua halaman yang dipilih -- toggle dari Print Screen.
+            crop_rects = json.loads(crop_rects_json) if crop_rects_json else {}
             cropped_images = {}
             for idx in page_indices:
                 if 0 <= idx < len(raw_pages):
-                    cropped_images[idx] = printer.smart_crop_and_resize(raw_pages[idx], use_smart_crop=smart_crop)
+                    page_img = raw_pages[idx]
+                    rect = crop_rects.get(str(idx))
+                    if rect:
+                        page_img = crop_to_rect(page_img, rect["left"], rect["top"], rect["right"], rect["bottom"])
+                    cropped_images[idx] = printer.smart_crop_and_resize(page_img, use_smart_crop=smart_crop)
             
             # Print
             printer.print_pages(page_indices, cropped_images)
@@ -409,7 +434,8 @@ async def print_pdf(
 async def print_batch(
     files: List[UploadFile] = File(...),
     paper_width_mm: Optional[int] = Form(None),
-    smart_crop: bool = Form(True)
+    smart_crop: bool = Form(True),
+    crop_rects_json: Optional[str] = Form(None),  # JSON: {"0": {...}, "1": {...}} key = index file
 ):
     """
     Print multiple files (gambar atau PDF) sekaligus.
@@ -428,9 +454,11 @@ async def print_batch(
                 raise HTTPException(status_code=400, detail="Gagal koneksi ke printer")
         
         all_images = []
+        crop_rects = json.loads(crop_rects_json) if crop_rects_json else {}
         
-        for file in files:
+        for file_idx, file in enumerate(files):
             contents = await file.read()
+            rect = crop_rects.get(str(file_idx))
             
             if file.filename.lower().endswith('.pdf'):
                 if not PDF_SUPPORT:
@@ -443,12 +471,16 @@ async def print_batch(
                 try:
                     raw_pages = convert_from_path(tmp_path, dpi=300)
                     for page in raw_pages:
+                        if rect:
+                            page = crop_to_rect(page, rect["left"], rect["top"], rect["right"], rect["bottom"])
                         all_images.append(printer.smart_crop_and_resize(page, use_smart_crop=smart_crop))
                 finally:
                     os.unlink(tmp_path)
             else:
                 # Gambar
                 img = Image.open(io.BytesIO(contents))
+                if rect:
+                    img = crop_to_rect(img, rect["left"], rect["top"], rect["right"], rect["bottom"])
                 all_images.append(printer.smart_crop_and_resize(img, use_smart_crop=smart_crop))
         
         if not all_images:

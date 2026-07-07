@@ -253,12 +253,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Print single image
-  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true}) async {
+  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true, CropRect? cropRect}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.printImage(imageFile, paperWidthMm: paperWidthMm, smartCrop: smartCrop);
+      await _apiService.printImage(imageFile, paperWidthMm: paperWidthMm, smartCrop: smartCrop, cropRect: cropRect);
       _errorMessage = null;
       _errorDetails = null;
       return true;
@@ -272,12 +272,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Print PDF
-  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true}) async {
+  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.printPdf(pdfFile, pages, paperWidthMm: paperWidthMm, smartCrop: smartCrop);
+      await _apiService.printPdf(pdfFile, pages, paperWidthMm: paperWidthMm, smartCrop: smartCrop, cropRects: cropRects);
       _errorMessage = null;
       _errorDetails = null;
       return true;
@@ -291,12 +291,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Print batch
-  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true}) async {
+  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.printBatch(files, paperWidthMm: paperWidthMm, smartCrop: smartCrop);
+      await _apiService.printBatch(files, paperWidthMm: paperWidthMm, smartCrop: smartCrop, cropRects: cropRects);
       _errorMessage = null;
       _errorDetails = null;
       return true;

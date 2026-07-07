@@ -9,6 +9,7 @@ import '../../core/services/recent_files_service.dart';
 import '../print/print_screen.dart';
 import '../settings/settings_screen.dart';
 import '../logs/log_viewer_screen.dart';
+import '../ble/ble_scan_screen.dart';
 import '../../services/desktop_backend_service.dart';
 import '../../widgets/circle_nav_bar.dart';
 import '../../widgets/printer_status_header.dart';
@@ -80,85 +81,7 @@ class WorkspaceScreen extends StatelessWidget {
   }
 
   Future<void> _handleScanBle(BuildContext context, PrinterProvider provider) async {
-    _showScanningDialog(context);
-    await provider.discoverBleDevices();
-    if (!context.mounted) return;
-    Navigator.of(context, rootNavigator: true).pop(); // tutup dialog scanning
-    if (provider.errorMessage != null) {
-      _showSnackBar(context, provider.errorMessage!, isError: true, details: provider.errorDetails);
-      return;
-    }
-    if (provider.bleDevices.isEmpty) {
-      _showSnackBar(context, 'Tidak ada device BLE ditemukan di sekitar.');
-      return;
-    }
-    _showBleDevicePicker(context, provider);
-  }
-
-  void _showScanningDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => Dialog(
-        child: Padding(
-          padding: const EdgeInsets.all(UiConstants.spacingLg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 120,
-                height: 120,
-                child: Lottie.asset(
-                  'assets/lottie/bluetooth_scan_pulse.json',
-                  errorBuilder: (c, e, s) => const CircularProgressIndicator(),
-                ),
-              ),
-              const SizedBox(height: UiConstants.spacingMd),
-              const Text('Mencari printer BLE di sekitar...'),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showBleDevicePicker(BuildContext context, PrinterProvider provider) {
-    showModalBottomSheet(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(UiConstants.spacingMd),
-              child: Text('Pilih Printer BLE', style: Theme.of(sheetContext).textTheme.titleMedium),
-            ),
-            ...provider.bleDevices.map((device) => ListTile(
-                  leading: const Icon(Icons.bluetooth),
-                  title: Text(device.name),
-                  subtitle: Text(device.address),
-                  trailing: device.rssi != null ? Text('${device.rssi} dBm') : null,
-                  onTap: () async {
-                    Navigator.pop(sheetContext);
-                    final success = await provider.connectBle(deviceAddress: device.address, deviceName: device.name);
-                    if (!context.mounted) return;
-                    if (success) {
-                      _showSnackBar(context, 'Terhubung ke ${device.name}.');
-                    } else {
-                      _showSnackBar(
-                        context,
-                        provider.errorMessage ?? 'Gagal terhubung ke ${device.name}.',
-                        isError: true,
-                        details: provider.errorDetails,
-                      );
-                    }
-                  },
-                )),
-            const SizedBox(height: UiConstants.spacingMd),
-          ],
-        ),
-      ),
-    );
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => const BleScanScreen()));
   }
 
   void _showSnackBar(BuildContext context, String message, {bool isError = false, String? details}) {

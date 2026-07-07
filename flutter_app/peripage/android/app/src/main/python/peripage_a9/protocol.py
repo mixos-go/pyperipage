@@ -84,6 +84,38 @@ def save_paper_width_mm(paper_width_mm, warning_tag="LOGIC"):
         traceback.print_exc()
 
 
+def crop_to_rect(pil_img, left: float, top: float, right: float, bottom: float, error_tag="LOGIC"):
+    """
+    Manual Crop Editor: potong gambar sesuai rectangle yang user pilih
+    sendiri (drag di UI), dalam koordinat ternormalisasi 0.0-1.0 (bukan
+    pixel) supaya konsisten dipakai lintas resolusi gambar/thumbnail.
+
+    Beda dengan `resize_to_paper_width` (yang cuma resize tanpa crop apa
+    pun) -- ini benar-benar MEMOTONG gambar ke area pilihan user, baru
+    hasilnya diserahkan ke resize_to_paper_width() buat dikunci ke lebar
+    kertas fisik.
+
+    Args:
+        left, top, right, bottom: fraksi 0.0-1.0 dari lebar/tinggi gambar asli.
+    """
+    try:
+        img = pil_img.convert("RGB")
+        w, h = img.size
+        box = (
+            max(0, int(left * w)),
+            max(0, int(top * h)),
+            min(w, int(right * w)),
+            min(h, int(bottom * h)),
+        )
+        if box[2] <= box[0] or box[3] <= box[1]:
+            raise ValueError(f"Crop rect tidak valid: {box}")
+        return img.crop(box)
+    except Exception as e:
+        print(f"\n[{error_tag} ERROR] Gagal pada fungsi crop_to_rect:")
+        traceback.print_exc()
+        raise e
+
+
 def resize_to_paper_width(pil_img, paper_width_mm=DEFAULT_PAPER_WIDTH_MM, error_tag="LOGIC"):
     """
     Mode MANUAL (lawan dari smart_crop_and_resize): cuma resize gambar ASLI
