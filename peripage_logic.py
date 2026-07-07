@@ -19,10 +19,16 @@ from peripage_protocol import (
     CONFIG_DIR,
     CONFIG_PATH,
     CALIBRATED_BYTES_PER_ROW,
+    CROP_REFERENCE_DPI,
     get_paper_dimensions,
     load_paper_width_mm,
     save_paper_width_mm,
     smart_crop_and_resize,
+    manual_crop_and_resize,
+    auto_detect_full_bbox,
+    auto_detect_horizontal_bbox,
+    mm_to_px,
+    px_to_mm,
     send_print_job,
 )
 from transport_usb import UsbTransport, TransportError

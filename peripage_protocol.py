@@ -36,6 +36,18 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, "settings.json")
 
 
 # =====================================================================
+# KONFIGURASI CROP MANUAL
+# DPI ini dipakai HANYA untuk konversi mm<->px pada fitur crop manual
+# (garis offset atas/bawah di crop editor), SAMA DENGAN dpi render PDF
+# di peripage_gui.py (convert_from_path(..., dpi=300)). Kalau nanti dpi
+# render PDF diubah, nilai ini WAJIB ikut diubah supaya mistar mm di
+# crop editor tetap akurat. Untuk gambar hasil impor langsung (JPG/PNG)
+# yang tidak selalu 300dpi, ini dipakai sebagai asumsi pendekatan.
+CROP_REFERENCE_DPI = 300
+# =====================================================================
+
+
+# =====================================================================
 # OVERRIDE KALIBRASI MANUAL
 # Kalau hasil tes tools/calibrate_paper_width.py menunjukkan lebar cetak
 # asli unit kamu BEDA dari asumsi 8 dot/mm, isi di sini nilai byte yang
@@ -127,6 +139,99 @@ def smart_crop_and_resize(pil_img, paper_width_mm=DEFAULT_PAPER_WIDTH_MM, error_
 
     except Exception as e:
         print(f"\n[{error_tag} ERROR] Gagal pada fungsi smart_crop_and_resize:")
+        traceback.print_exc()
+        raise e
+
+
+def mm_to_px(mm, dpi=CROP_REFERENCE_DPI):
+    """Konversi milimeter -> piksel pada dpi referensi crop manual."""
+    return int(round(mm * dpi / 25.4))
+
+
+def px_to_mm(px, dpi=CROP_REFERENCE_DPI):
+    """Konversi piksel -> milimeter pada dpi referensi crop manual."""
+    return px * 25.4 / dpi
+
+
+def auto_detect_full_bbox(pil_img):
+    """Deteksi bbox 4-arah konten aktif PERSIS sama seperti bagian awal
+    smart_crop_and_resize (termasuk padding +-10px), tapi hanya mengembalikan
+    koordinatnya (tidak langsung crop). Dipakai crop editor manual untuk
+    menaruh posisi awal garis atas/bawah di titik yang masuk akal (bukan
+    mulai dari 0), sebelum pengguna geser manual."""
+    img = pil_img.convert("RGB")
+    orig_w, orig_h = img.size
+    bg = Image.new(img.mode, img.size, (255, 255, 255))
+    diff = ImageChops.difference(img, bg)
+    diff = ImageChops.add(diff, diff, 2.0, -100)
+    bbox = diff.getbbox()
+    if bbox:
+        left, upper, right, lower = bbox
+        left = max(0, left)
+        upper = max(0, upper - 10)
+        right = min(orig_w, right + 10)
+        lower = min(orig_h, lower + 10)
+        return left, upper, right, lower
+    return 0, 0, orig_w, orig_h
+
+
+def auto_detect_horizontal_bbox(pil_img):
+    """Deteksi batas kiri/kanan konten aktif (buang spasi kosong kiri-kanan)
+    dengan algoritma yang sama seperti smart_crop_and_resize, tapi HANYA
+    sumbu horizontal -- dipakai crop manual supaya lebar konten tetap presisi
+    otomatis sementara batas atas/bawah diatur manual oleh pengguna."""
+    img = pil_img.convert("RGB")
+    orig_w, orig_h = img.size
+    bg = Image.new(img.mode, img.size, (255, 255, 255))
+    diff = ImageChops.difference(img, bg)
+    diff = ImageChops.add(diff, diff, 2.0, -100)
+    bbox = diff.getbbox()
+    if bbox:
+        left, _, right, _ = bbox
+        left = max(0, left)
+        right = min(orig_w, right + 10)
+        return left, right
+    return 0, orig_w
+
+
+def manual_crop_and_resize(pil_img, top_offset_px, bottom_offset_px,
+                            paper_width_mm=DEFAULT_PAPER_WIDTH_MM, error_tag="LOGIC"):
+    """
+    Crop Manual dengan Pola Offset Tetap (Fixed Offset Pattern):
+    Membuang persis `top_offset_px` piksel dari atas dan `bottom_offset_px`
+    piksel dari bawah pada gambar MENTAH (raw, belum di-crop). Sisa bagian
+    tengah TIDAK ikut diatur -- otomatis mengikuti panjang asli halaman
+    tersebut, jadi cocok dipakai sebagai satu "pola" (pattern) yang di-apply
+    rata ke semua halaman meskipun panjang tiap halaman berbeda-beda.
+
+    Lebar kiri/kanan tetap dipotong otomatis (whitespace detection) dan
+    dikunci ke lebar kertas fisik, sama seperti smart_crop_and_resize --
+    hanya sumbu vertikal (atas/bawah) yang manual.
+    """
+    try:
+        img = pil_img.convert("RGB")
+        orig_w, orig_h = img.size
+
+        left, right = auto_detect_horizontal_bbox(img)
+
+        # Offset atas/bawah manual, di-clamp supaya tidak saling menabrak
+        # dan tidak melebihi ukuran gambar (jaga-jaga halaman pendek).
+        upper = max(0, min(int(top_offset_px), orig_h - 1))
+        lower = max(upper + 1, orig_h - max(0, int(bottom_offset_px)))
+        lower = min(lower, orig_h)
+
+        cropped_content = img.crop((left, upper, right, lower))
+        crop_w, crop_h = cropped_content.size
+
+        target_width, _ = get_paper_dimensions(paper_width_mm)
+        width_percent = (target_width / float(crop_w))
+        target_height = int((float(crop_h) * float(width_percent)))
+
+        final_img = cropped_content.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        return final_img
+
+    except Exception as e:
+        print(f"\n[{error_tag} ERROR] Gagal pada fungsi manual_crop_and_resize:")
         traceback.print_exc()
         raise e
 
