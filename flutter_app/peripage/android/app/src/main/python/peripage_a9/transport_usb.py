@@ -55,6 +55,15 @@ class UsbTransport:
     def close(self):
         self._native.close()
 
+    @property
+    def is_connected(self) -> bool:
+        """Cek status koneksi USB sebenarnya (fix Juli 2026) -- lihat
+        komentar serupa di BleTransportSync.is_connected."""
+        try:
+            return bool(self._native.isConnected())
+        except Exception:
+            return False
+
     def __enter__(self):
         return self.connect()
 

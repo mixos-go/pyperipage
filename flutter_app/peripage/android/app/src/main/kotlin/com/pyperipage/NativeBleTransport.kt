@@ -50,6 +50,8 @@ object NativeBleTransport {
     )
 
     private const val DEFAULT_MTU = 20 // fallback aman kalau requestMtu gagal/tidak didukung
+    private const val MAX_WRITE_RETRIES = 3
+    private const val WRITE_PACING_MS = 8L // dinaikkan dari 2ms -- kasih waktu printer proses buffer
 
     private lateinit var appContext: Context
     private lateinit var bluetoothAdapter: BluetoothAdapter
@@ -59,6 +61,27 @@ object NativeBleTransport {
     private var negotiatedMtu: Int = DEFAULT_MTU
     private var writeLatch: CountDownLatch? = null
     private var writeSuccess: Boolean = false
+
+    /** Detail kegagalan write TERAKHIR -- dipakai Python buat pesan error yang
+     * jelas ("chunk mana, kenapa gagal") daripada cuma "koneksi terputus?". */
+    var lastWriteError: String? = null
+        private set
+
+    /**
+     * Status koneksi GATT SEBENARNYA (bukan cuma "objek Python masih ada").
+     * Di-update tiap `onConnectionStateChange` callback fire -- termasuk
+     * kalau Android/printer diam-diam DISCONNECT di background TANPA
+     * user pernah pencet "Putuskan" (ini wajar terjadi di BLE, banyak
+     * printer hemat-daya auto-disconnect setelah idle beberapa menit).
+     * FIX Juli 2026: sebelumnya get_printer_status() cuma cek variabel
+     * Python `_driver._transport is not None`, yang TETAP True walau
+     * GATT connection aslinya sudah mati -- bikin UI nunjukin "Terhubung"
+     * padahal print bakal langsung gagal di chunk pertama.
+     */
+    @Volatile
+    private var isGattConnected = false
+
+    fun isConnected(): Boolean = isGattConnected && gatt != null && writeCharacteristic != null
 
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -137,9 +160,11 @@ object NativeBleTransport {
             override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     connected = true
+                    isGattConnected = true
                     g.discoverServices()
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     connected = false
+                    isGattConnected = false
                     connectLatch.countDown()
                 }
             }
@@ -229,6 +254,13 @@ object NativeBleTransport {
      * Kirim data, di-chunk sesuai MTU yang dinegosiasikan (mirroring
      * perilaku BleTransport lama yang pakai 80% margin dari MTU).
      */
+    /**
+     * Kirim data, di-chunk sesuai MTU yang dinegosiasikan. Print job PDF
+     * multi-halaman bisa kirim RATUSAN chunk berurutan -- fix Juli 2026:
+     * tambah retry per chunk (sebelumnya 1x gagal langsung abort semua
+     * job, padahal kegagalan transient -- GATT busy, printer lagi proses
+     * buffer, dll -- itu wajar terjadi sesekali di tengah transfer besar).
+     */
     fun write(data: ByteArray): Boolean {
         val g = gatt ?: return false
         val characteristic = writeCharacteristic ?: return false
@@ -238,38 +270,64 @@ object NativeBleTransport {
             val end = (offset + negotiatedMtu).coerceAtMost(data.size)
             val chunk = data.copyOfRange(offset, end)
 
-            val latch = CountDownLatch(1)
-            writeLatch = latch
-            writeSuccess = false
+            var chunkSucceeded = false
+            var lastAttemptError = ""
 
-            val writeType = if (characteristic.properties and
-                BluetoothGattCharacteristic.PROPERTY_WRITE != 0
-            ) {
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            } else {
-                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            for (attempt in 1..MAX_WRITE_RETRIES) {
+                val latch = CountDownLatch(1)
+                writeLatch = latch
+                writeSuccess = false
+
+                val writeType = if (characteristic.properties and
+                    BluetoothGattCharacteristic.PROPERTY_WRITE != 0
+                ) {
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                } else {
+                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                }
+
+                val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    g.writeCharacteristic(characteristic, chunk, writeType) == BluetoothGatt.GATT_SUCCESS
+                } else {
+                    @Suppress("DEPRECATION")
+                    characteristic.writeType = writeType
+                    @Suppress("DEPRECATION")
+                    characteristic.value = chunk
+                    @Suppress("DEPRECATION")
+                    g.writeCharacteristic(characteristic)
+                }
+
+                if (!ok) {
+                    lastAttemptError = "GATT menolak writeCharacteristic (queue busy?)"
+                } else if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) {
+                    val completed = latch.await(5, TimeUnit.SECONDS)
+                    if (!completed) {
+                        lastAttemptError = "Timeout menunggu onCharacteristicWrite (5 detik)"
+                    } else if (!writeSuccess) {
+                        lastAttemptError = "onCharacteristicWrite melaporkan status gagal"
+                    } else {
+                        chunkSucceeded = true
+                    }
+                } else {
+                    // WRITE_TYPE_NO_RESPONSE: tidak ada callback, anggap sukses
+                    // begitu writeCharacteristic() sendiri return true.
+                    chunkSucceeded = true
+                }
+
+                if (chunkSucceeded) break
+
+                // Backoff singkat sebelum retry -- kasih waktu printer/GATT
+                // stack "napas" sebelum coba lagi.
+                Thread.sleep(50L * attempt)
             }
 
-            val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                g.writeCharacteristic(characteristic, chunk, writeType) == BluetoothGatt.GATT_SUCCESS
-            } else {
-                @Suppress("DEPRECATION")
-                characteristic.writeType = writeType
-                @Suppress("DEPRECATION")
-                characteristic.value = chunk
-                @Suppress("DEPRECATION")
-                g.writeCharacteristic(characteristic)
-            }
-            if (!ok) return false
-
-            // WRITE_TYPE_NO_RESPONSE tidak akan pernah memicu onCharacteristicWrite,
-            // jadi jangan nunggu latch kalau memang pakai mode itu.
-            if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) {
-                latch.await(5, TimeUnit.SECONDS)
-                if (!writeSuccess) return false
+            if (!chunkSucceeded) {
+                lastWriteError = "Gagal kirim chunk di offset $offset/${data.size} setelah " +
+                    "$MAX_WRITE_RETRIES percobaan: $lastAttemptError"
+                return false
             }
 
-            Thread.sleep(2) // jeda kecil, sama seperti transport lama
+            Thread.sleep(WRITE_PACING_MS) // jeda kecil antar chunk, kasih waktu printer proses
             offset = end
         }
         return true
@@ -285,6 +343,7 @@ object NativeBleTransport {
             gatt = null
             writeCharacteristic = null
             negotiatedMtu = DEFAULT_MTU
+            isGattConnected = false
         }
     }
 }

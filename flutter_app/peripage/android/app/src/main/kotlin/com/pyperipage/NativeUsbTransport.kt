@@ -43,6 +43,8 @@ object NativeUsbTransport {
     private var usbInterface: UsbInterface? = null
     private var endpointOut: UsbEndpoint? = null
 
+    fun isConnected(): Boolean = connection != null && endpointOut != null
+
     fun init(context: Context) {
         appContext = context.applicationContext
         usbManager = appContext.getSystemService(Context.USB_SERVICE) as UsbManager

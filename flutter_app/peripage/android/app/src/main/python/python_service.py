@@ -92,7 +92,27 @@ def discover_ble_devices(timeout: float = 5.0) -> dict:
 
 def get_printer_status() -> dict:
     """Dipakai ApiService.getPrinterStatus() -> PrinterStatus.fromJson()."""
-    connected = _driver is not None and getattr(_driver, "_transport", None) is not None
+    global _driver, _device_address, _device_name
+    # FIX Juli 2026: sebelumnya cuma cek `_driver._transport is not None`
+    # (objek Python masih ada) -- itu TETAP True walau koneksi BLE/USB
+    # aslinya sudah mati di background (BLE khususnya sering auto-disconnect
+    # kalau idle). Sekarang pakai is_connected yang cek status GATT/USB
+    # SEBENARNYA lewat native layer -- kalau ternyata sudah putus, bersihkan
+    # state supaya user tahu harus connect ulang (bukan nunggu gagal pas
+    # print baru ketahuan).
+    transport = getattr(_driver, "_transport", None)
+    really_connected = False
+    if transport is not None:
+        is_connected_attr = getattr(transport, "is_connected", None)
+        really_connected = bool(is_connected_attr) if is_connected_attr is not None else True
+
+    if _driver is not None and not really_connected:
+        # Koneksi ternyata sudah mati -- bersihkan state supaya konsisten.
+        _driver = None
+        _device_address = None
+        _device_name = None
+
+    connected = _driver is not None and really_connected
     return {
         "connected": connected,
         "transport_type": _transport_type,
@@ -125,6 +145,33 @@ def set_paper_width(width_mm: int) -> dict:
         return {"status": "ok"}
     except Exception as e:
         return _err(e)
+
+
+def _is_really_connected() -> bool:
+    """Cek koneksi SEBENARNYA (bukan cuma `_driver is not None`) sebelum
+    mulai kirim print job -- supaya gagalnya CEPAT & JELAS di awal, bukan
+    di tengah transfer data yang sudah kepalang jalan (fix Juli 2026)."""
+    transport = getattr(_driver, "_transport", None)
+    if transport is None:
+        return False
+    is_connected_attr = getattr(transport, "is_connected", None)
+    return bool(is_connected_attr) if is_connected_attr is not None else True
+
+
+def _connection_lost_error() -> dict:
+    """Bersihkan state driver yang basi & kasih pesan jelas ke user -- ini
+    dipanggil kalau `_driver` ada tapi koneksi native-nya ternyata sudah
+    mati (mis. BLE auto-disconnect saat idle). User tinggal connect ulang
+    dari Settings, tidak perlu restart app."""
+    global _driver, _device_address, _device_name
+    _driver = None
+    _device_address = None
+    _device_name = None
+    return {
+        "status": "error",
+        "message": "Koneksi printer sudah terputus (mungkin idle timeout atau di luar jangkauan). "
+                    "Silakan connect ulang dari Settings.",
+    }
 
 
 def _apply_manual_crop(img, crop_rect: dict = None):
@@ -165,6 +212,8 @@ def print_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = 
     global _driver
     if _driver is None:
         return {"status": "error", "message": "Printer belum terhubung."}
+    if not _is_really_connected():
+        return _connection_lost_error()
     try:
         if paper_width_mm:
             _driver.set_paper_width(paper_width_mm)
@@ -199,6 +248,8 @@ def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None, 
     global _driver
     if _driver is None:
         return {"status": "error", "message": "Printer belum terhubung."}
+    if not _is_really_connected():
+        return _connection_lost_error()
     if len(image_paths) != len(pages):
         return {"status": "error", "message": "image_paths dan pages harus punya panjang sama."}
     try:
@@ -225,6 +276,8 @@ def print_batch(file_paths: list, paper_width_mm: int = None, smart_crop: bool =
     global _driver
     if _driver is None:
         return {"status": "error", "message": "Printer belum terhubung."}
+    if not _is_really_connected():
+        return _connection_lost_error()
     try:
         if paper_width_mm:
             _driver.set_paper_width(paper_width_mm)

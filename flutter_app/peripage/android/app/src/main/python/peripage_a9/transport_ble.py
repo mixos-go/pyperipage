@@ -139,7 +139,11 @@ class BleTransportSync:
 
         ok = self._native.write(bytearray(data))
         if not ok:
-            raise TransportError("Gagal kirim data BLE (koneksi terputus?).")
+            # lastWriteError (fix Juli 2026) kasih tahu PERSIS chunk mana &
+            # kenapa gagal (timeout, GATT busy, dll) -- bukan cuma dugaan
+            # generik "koneksi terputus?" yang tidak actionable.
+            detail = self._native.lastWriteError or "(tidak ada detail tambahan)"
+            raise TransportError(f"Gagal kirim data BLE: {detail}")
 
     def close(self) -> None:
         """Tutup koneksi BLE dan lepas resource."""
@@ -147,6 +151,21 @@ class BleTransportSync:
             self._native.close()
         finally:
             self._connected = False
+
+    @property
+    def is_connected(self) -> bool:
+        """
+        Cek status koneksi GATT SEBENARNYA lewat NativeBleTransport (fix
+        Juli 2026) -- BUKAN cuma flag `self._connected` Python yang bisa
+        basi kalau Android/printer diam-diam disconnect di background
+        (umum terjadi di BLE, printer hemat daya sering auto-disconnect
+        setelah idle). Dipakai get_printer_status() supaya UI selalu
+        nunjukin status koneksi yang akurat, bukan status yang "seharusnya".
+        """
+        try:
+            return bool(self._connected and self._native.isConnected())
+        except Exception:
+            return False
 
     def __enter__(self) -> 'BleTransportSync':
         return self.connect()
