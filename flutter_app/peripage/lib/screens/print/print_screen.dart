@@ -308,6 +308,7 @@ class _PrintScreenState extends State<PrintScreen> {
     }
 
     if (images.isEmpty) return;
+    if (!mounted) return;
 
     final result = await Navigator.push<Map<int, CropRect>>(
       context,
@@ -348,7 +349,14 @@ class _PrintScreenState extends State<PrintScreen> {
       transitionDuration: const Duration(milliseconds: 200),
       pageBuilder: (dialogContext, anim1, anim2) {
         Future.delayed(const Duration(milliseconds: 1100), () {
-          if (Navigator.of(dialogContext).canPop()) Navigator.of(dialogContext).pop();
+          // dialogContext dipakai di dalam callback async (Future.delayed) --
+          // `.mounted` di sini AMAN dipanggil walau context sudah disposed
+          // (beda dengan ModalRoute.of() yang bisa throw di context mati),
+          // jadi ini setara "mounted check" resmi buat BuildContext dialog
+          // yang tidak attached ke sebuah State.
+          if (dialogContext.mounted && Navigator.of(dialogContext).canPop()) {
+            Navigator.of(dialogContext).pop();
+          }
         });
         return Center(
           child: SizedBox(

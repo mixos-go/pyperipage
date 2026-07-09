@@ -62,7 +62,12 @@ dependencies:
   # Manual Crop Editor -- drag/pinch buat pilih area crop sendiri, pure-Dart
   # (bukan native platform view), jadi jalan di semua platform termasuk
   # desktop Windows/Linux (beda dengan image_cropper yang cuma mobile).
-  crop_your_image: ^1.1.0
+  # (crop_your_image DIHAPUS Juli 2026: 2x percobaan pakai package ini
+  # gagal karena resize handle tidak muncul di device fisik -- API
+  # cornerDotBuilder/onMoved-nya tidak konsisten dengan dokumentasi yang
+  # tersedia. Manual Crop Editor sekarang dibangun sendiri dari widget
+  # Flutter dasar di lib/screens/crop/manual_crop_screen.dart -- 100%
+  # terkontrol, tidak bergantung API package pihak ketiga lagi.)
 
   # Persist pilihan tema (Light/Dark/AMOLED) antar sesi.
   shared_preferences: ^2.3.3

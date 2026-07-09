@@ -142,7 +142,11 @@ class BleTransportSync:
             # lastWriteError (fix Juli 2026) kasih tahu PERSIS chunk mana &
             # kenapa gagal (timeout, GATT busy, dll) -- bukan cuma dugaan
             # generik "koneksi terputus?" yang tidak actionable.
-            detail = self._native.lastWriteError or "(tidak ada detail tambahan)"
+            # PENTING: Kotlin `var lastWriteError` (property) di-compile jadi
+            # method Java getLastWriteError() -- Chaquopy expose method JVM,
+            # BUKAN sintaks property Kotlin, jadi harus dipanggil sebagai
+            # method () bukan diakses sebagai attribute polos.
+            detail = self._native.getLastWriteError() or "(tidak ada detail tambahan)"
             raise TransportError(f"Gagal kirim data BLE: {detail}")
 
     def close(self) -> None:

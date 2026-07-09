@@ -131,7 +131,7 @@ class _BleScanScreenState extends State<BleScanScreen> {
                         child: ListTile(
                           leading: CircleAvatar(
                             backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.12),
-                            child: Icon(Icons.print, color: AppTheme.primaryColor),
+                            child: const Icon(Icons.print, color: AppTheme.primaryColor),
                           ),
                           title: Text(device.name, style: const TextStyle(fontWeight: FontWeight.w600)),
                           subtitle: Text(device.address),
