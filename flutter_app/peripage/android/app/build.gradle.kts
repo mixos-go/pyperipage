@@ -103,6 +103,15 @@ kotlin {
     }
 }
 
+dependencies {
+    // ZXing core -- deteksi barcode/QR native di Android. Dipilih KHUSUS
+    // karena pure Java/Kotlin, TIDAK butuh native code (.so) sama sekali --
+    // beda kelas masalah dengan pymupdf/pyusb/bleak yang gagal di Chaquopy
+    // karena butuh native library. Dipakai oleh NativeBarcodeDetector.kt
+    // untuk fitur "Auto-deselect halaman tanpa barcode" di Print Screen.
+    implementation("com.google.zxing:core:3.5.3")
+}
+
 flutter {
     source = "../.."
 }

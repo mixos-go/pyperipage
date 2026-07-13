@@ -43,6 +43,7 @@ class _PrintScreenState extends State<PrintScreen> {
   List<Uint8ListThumb> _pdfThumbnails = [];
   Set<int> _selectedPages = {}; // 0-indexed
   bool _loadingThumbnails = false;
+  bool _checkingBarcode = false;
 
   // Preview gambar (non-PDF)
   bool _isLoadingPreview = false;
@@ -110,6 +111,37 @@ class _PrintScreenState extends State<PrintScreen> {
 
   /// Render THUMBNAIL tiap halaman PDF (bukan cuma minta user ketik nomor
   /// halaman manual) supaya user bisa lihat & pilih halaman secara visual.
+  /// Auto-pilih halaman PDF yang punya barcode/QR terdeteksi, deselect
+  /// sisanya -- dipakai buat resi pengiriman massal (1 PDF berisi banyak
+  /// label + kadang halaman ringkasan/invoice non-label yang tidak perlu
+  /// diprint). Modul deteksinya terpisah di backend (peripage_a9.barcode_detect).
+  Future<void> _autoSelectPagesWithBarcode() async {
+    if (_pdfThumbnails.isEmpty) return;
+    setState(() => _checkingBarcode = true);
+    try {
+      final provider = context.read<PrinterProvider>();
+      final sorted = [..._pdfThumbnails]..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+      final results = await provider.apiService.checkPagesForBarcode(sorted.map((t) => t.bytes).toList());
+      if (!mounted) return;
+      final withBarcode = <int>{};
+      for (int i = 0; i < sorted.length; i++) {
+        if (i < results.length && results[i]) withBarcode.add(sorted[i].pageIndex);
+      }
+      setState(() => _selectedPages = withBarcode);
+      final skipped = sorted.length - withBarcode.length;
+      _showSuccess(
+        skipped > 0
+            ? '${withBarcode.length} halaman berbarcode terpilih, $skipped halaman tanpa barcode di-skip.'
+            : 'Semua ${withBarcode.length} halaman punya barcode, semua terpilih.',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _showError('Gagal cek barcode: $e');
+    } finally {
+      if (mounted) setState(() => _checkingBarcode = false);
+    }
+  }
+
   Future<void> _loadPdfThumbnails(File pdfFile) async {
     setState(() => _loadingThumbnails = true);
     try {
@@ -269,22 +301,27 @@ class _PrintScreenState extends State<PrintScreen> {
       }
       initial = _manualCrops;
     } else if (_isPdf && _pdfThumbnails.isNotEmpty) {
-      final selected = _selectedPages.toList()..sort();
-      if (selected.isEmpty) {
-        _showError('Pilih minimal 1 halaman dulu sebelum edit crop.');
-        return;
-      }
-      for (final pageIdx in selected) {
-        final thumb = _pdfThumbnails.firstWhere((t) => t.pageIndex == pageIdx);
+      // FIX Juli 2026: kirim SEMUA halaman PDF ke editor (bukan cuma yang
+      // sedang dicentang buat print) -- sebelumnya kalau user belum sengaja
+      // centang banyak halaman dulu (default cuma halaman 1 tercentang),
+      // editor cuma dapat 1 gambar sehingga tombol "Apply Semua"/"Apply
+      // Terpilih" TIDAK PERNAH muncul (butuh multiPage = images.length > 1).
+      // Dengan semua halaman selalu tersedia di editor, user bisa atur pola
+      // crop dulu & apply ke semua/beberapa halaman TERLEPAS dari halaman
+      // mana yang akhirnya mereka pilih buat diprint.
+      final sortedThumbs = [..._pdfThumbnails]..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+      for (final thumb in sortedThumbs) {
         images.add(thumb.bytes);
-        labels.add('Halaman ${pageIdx + 1}');
+        labels.add('Halaman ${thumb.pageIndex + 1}');
       }
-      // Map index lokal (posisi di `images`) -> pageIdx asli, supaya hasil
-      // crop tersimpan dengan key page index yang benar.
-      final localToPage = {for (int i = 0; i < selected.length; i++) i: selected[i]};
+      // Index lokal (posisi di `images`, urut) == pageIndex asli di sini
+      // karena sortedThumbs sudah diurutkan dari pageIndex 0..N berurutan
+      // tanpa celah (semua halaman PDF ikut, bukan subset).
+      final localToPage = {for (int i = 0; i < sortedThumbs.length; i++) i: sortedThumbs[i].pageIndex};
       for (final entry in localToPage.entries) {
         if (_manualCrops.containsKey(entry.value)) initial[entry.key] = _manualCrops[entry.value]!;
       }
+      if (!mounted) return;
       final result = await Navigator.push<Map<int, CropRect>>(
         context,
         MaterialPageRoute(builder: (_) => ManualCropScreen(images: images, labels: labels, initialCrops: initial)),
@@ -541,6 +578,38 @@ class _PrintScreenState extends State<PrintScreen> {
     );
   }
 
+  /// Sama seperti _autoSelectPagesWithBarcode() tapi untuk Batch Mode
+  /// (multiple file gambar terpisah, bukan halaman dalam 1 PDF) --
+  /// menghapus file dari _selectedFiles yang tidak punya barcode
+  /// terdeteksi, bukan cuma "deselect" (karena batch mode tidak punya
+  /// konsep checkbox per-file, semua file yang dipilih pasti diprint).
+  Future<void> _filterBatchFilesWithBarcode() async {
+    if (_selectedFiles.isEmpty) return;
+    setState(() => _checkingBarcode = true);
+    try {
+      final provider = context.read<PrinterProvider>();
+      final bytesList = await Future.wait(_selectedFiles.map((f) => f.readAsBytes()));
+      final results = await provider.apiService.checkPagesForBarcode(bytesList);
+      if (!mounted) return;
+      final kept = <File>[];
+      for (int i = 0; i < _selectedFiles.length; i++) {
+        if (i < results.length && results[i]) kept.add(_selectedFiles[i]);
+      }
+      final removed = _selectedFiles.length - kept.length;
+      setState(() => _selectedFiles = kept);
+      _showSuccess(
+        removed > 0
+            ? '$removed file tanpa barcode dihapus dari daftar print.'
+            : 'Semua file punya barcode, tidak ada yang dihapus.',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _showError('Gagal cek barcode: $e');
+    } finally {
+      if (mounted) setState(() => _checkingBarcode = false);
+    }
+  }
+
   Widget _buildFilePickerCard(BuildContext context) {
     return Card(
       child: Padding(
@@ -564,13 +633,24 @@ class _PrintScreenState extends State<PrintScreen> {
                 subtitle: Text('${(_selectedFile!.lengthSync() / 1024).toStringAsFixed(1)} KB'),
                 trailing: IconButton(icon: const Icon(Icons.close), onPressed: _clearSelection),
               )
-            else if (_selectedFiles.isNotEmpty)
+            else if (_selectedFiles.isNotEmpty) ...[
               ListTile(
                 leading: const Icon(Icons.folder),
                 title: Text('${_selectedFiles.length} files'),
                 subtitle: Text(_selectedFiles.map((f) => f.path.split(Platform.pathSeparator).last).join(', ')),
                 trailing: IconButton(icon: const Icon(Icons.close), onPressed: _clearSelection),
               ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _checkingBarcode ? null : _filterBatchFilesWithBarcode,
+                  icon: _checkingBarcode
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.qr_code_scanner, size: 18),
+                  label: Text(_checkingBarcode ? 'Memeriksa barcode...' : 'Hapus File Tanpa Barcode'),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -612,6 +692,17 @@ class _PrintScreenState extends State<PrintScreen> {
                   ],
                 ),
               ],
+            ),
+            const SizedBox(height: UiConstants.spacingXs),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _checkingBarcode ? null : _autoSelectPagesWithBarcode,
+                icon: _checkingBarcode
+                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.qr_code_scanner, size: 18),
+                label: Text(_checkingBarcode ? 'Memeriksa barcode...' : 'Auto-pilih Halaman Berbarcode'),
+              ),
             ),
             const SizedBox(height: 8),
             GridView.builder(

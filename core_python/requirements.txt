@@ -10,6 +10,11 @@ pillow>=10.0.0
 # PDF support (opsional tapi direkomendasikan)
 pdf2image>=1.17.0
 
+# Deteksi barcode/QR untuk fitur "Auto-deselect halaman tanpa barcode"
+# (opsional). Windows: wheel sudah bundle libzbar DLL. Linux: butuh
+# `sudo apt install libzbar0`. macOS: butuh `brew install zbar`.
+pyzbar>=0.1.9
+
 # QR code generation (opsional)
 qrcode>=7.4.2
 

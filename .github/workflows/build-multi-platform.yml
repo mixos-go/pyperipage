@@ -224,7 +224,7 @@ jobs:
       - name: Install PyInstaller
         run: |
           pip install pyinstaller -r core_python/requirements.txt
-          brew install poppler
+          brew install poppler zbar  # poppler untuk PDF, zbar untuk deteksi barcode
 
       - name: Build Python Backend
         run: |
@@ -272,7 +272,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev poppler-utils
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev poppler-utils libzbar0
           pip install pyinstaller -r core_python/requirements.txt
 
       - name: Build Python Backend

@@ -24,13 +24,15 @@ Script ini punya 2 mode:
             library/peripage_a9/, supaya perubahan ikut ke semua target.
 
 PENTING -- FILE YANG DIKECUALIKAN dari sync ke Android:
-  transport_usb.py & transport_ble.py TIDAK di-sync ke folder Android.
-  Keduanya SENGAJA berbeda di Android -- isinya jembatan tipis ke
-  NativeUsbTransport.kt/NativeBleTransport.kt (Kotlin), BUKAN implementasi
-  pyusb/bleak seperti di desktop, karena pyusb/bleak tidak bisa jalan di
-  Android lewat Chaquopy (lihat komentar di file-file itu sendiri untuk
-  detail). File-file lain (driver.py, protocol.py, __init__.py) 100%
-  platform-agnostic dan WAJIB identik di semua tempat.
+  transport_usb.py, transport_ble.py, & barcode_detect.py TIDAK di-sync ke
+  folder Android. Ketiganya SENGAJA berbeda di Android -- isinya jembatan
+  tipis ke implementasi Kotlin native (NativeUsbTransport.kt,
+  NativeBleTransport.kt, NativeBarcodeDetector.kt), BUKAN implementasi
+  pyusb/bleak/pyzbar seperti di desktop, karena ketiga library itu butuh
+  native code yang tidak bisa jalan di Android lewat Chaquopy (lihat
+  komentar di file-file itu sendiri untuk detail). File-file lain
+  (driver.py, protocol.py, __init__.py) 100% platform-agnostic dan WAJIB
+  identik di semua tempat.
 
 Cara pakai:
   python scripts/sync_peripage_a9.py --check    # dipanggil CI
@@ -49,12 +51,15 @@ SOURCE_DIR = REPO_ROOT / "library" / "peripage_a9"
 TARGETS = [
     (
         REPO_ROOT / "core_python" / "peripage_a9",
-        ["__init__.py", "driver.py", "protocol.py", "transport_usb.py", "transport_ble.py"],
+        ["__init__.py", "driver.py", "protocol.py", "transport_usb.py", "transport_ble.py", "barcode_detect.py"],
     ),
     (
         REPO_ROOT / "flutter_app" / "peripage" / "android" / "app" / "src" / "main" / "python" / "peripage_a9",
-        # transport_usb.py & transport_ble.py SENGAJA TIDAK disync -- lihat
-        # docstring modul ini.
+        # transport_usb.py, transport_ble.py, & barcode_detect.py SENGAJA
+        # TIDAK disync -- ketiganya butuh implementasi native yang tidak
+        # bisa jalan di Chaquopy (pyusb/bleak/pyzbar semua butuh native
+        # code), jadi Android punya versi sendiri yang delegasi ke Kotlin.
+        # Lihat docstring di masing-masing file untuk detail.
         ["__init__.py", "driver.py", "protocol.py"],
     ),
 ]
