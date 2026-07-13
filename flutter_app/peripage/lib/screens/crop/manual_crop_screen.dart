@@ -126,6 +126,14 @@ class _ManualCropScreenState extends State<ManualCropScreen> {
           Expanded(
             child: PageView.builder(
               controller: _pageController,
+              // FIX (Juli 2026): swipe PageView DIMATIKAN -- sebelumnya
+              // drag handle resize crop (terutama dekat tepi kiri/kanan)
+              // berebut gesture arena dengan swipe PageView bawaan, bikin
+              // resize kadang malah kepick sebagai "ganti halaman" atau
+              // draggable jadi susah/tersendat. Navigasi antar halaman
+              // sepenuhnya lewat tombol panah (sudah ada di toolbar bawah),
+              // jadi swipe tidak dibutuhkan & aman dihilangkan sepenuhnya.
+              physics: const NeverScrollableScrollPhysics(),
               itemCount: widget.images.length,
               onPageChanged: (i) => setState(() => _currentPage = i),
               itemBuilder: (context, i) {
@@ -222,7 +230,8 @@ class _CropEditor extends StatefulWidget {
 
 class _CropEditorState extends State<_CropEditor> {
   ui.Image? _decoded;
-  static const double _handleSize = 28;
+  static const double _handleSize = 28; // ukuran visual (dot gradient)
+  static const double _handleTouchTarget = 48; // area SENTUH -- standar Material touch target minimum, jauh lebih besar dari visual biar tidak "susah di-drag"
   static const double _minCropFraction = 0.08; // area crop minimal 8% dari lebar/tinggi gambar
 
   @override
@@ -318,7 +327,7 @@ class _CropEditorState extends State<_CropEditor> {
             ),
             // Drag area TENGAH -- geser posisi kotak (tanpa ubah ukuran).
             Positioned.fromRect(
-              rect: cropWidgetRect.deflate(_handleSize / 2),
+              rect: cropWidgetRect.deflate(_handleTouchTarget / 2),
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
                 onPanUpdate: (details) {
@@ -408,19 +417,23 @@ class _CropEditorState extends State<_CropEditor> {
 
   Widget _cornerHandle({required Offset center, required ValueChanged<Offset> onDrag}) {
     return Positioned(
-      left: center.dx - _handleSize / 2,
-      top: center.dy - _handleSize / 2,
-      width: _handleSize,
-      height: _handleSize,
+      left: center.dx - _handleTouchTarget / 2,
+      top: center.dy - _handleTouchTarget / 2,
+      width: _handleTouchTarget,
+      height: _handleTouchTarget,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanUpdate: (details) => onDrag(details.delta),
-        child: Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: AppTheme.primaryGradient,
-            border: Border.all(color: Colors.white, width: 3),
-            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 6)],
+        child: Center(
+          child: Container(
+            width: _handleSize,
+            height: _handleSize,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: AppTheme.primaryGradient,
+              border: Border.all(color: Colors.white, width: 3),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 6)],
+            ),
           ),
         ),
       ),

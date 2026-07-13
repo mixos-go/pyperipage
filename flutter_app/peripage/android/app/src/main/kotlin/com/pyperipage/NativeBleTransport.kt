@@ -50,7 +50,7 @@ object NativeBleTransport {
     )
 
     private const val DEFAULT_MTU = 20 // fallback aman kalau requestMtu gagal/tidak didukung
-    private const val MAX_WRITE_RETRIES = 3
+    private const val MAX_WRITE_RETRIES = 5
     private const val WRITE_PACING_MS = 8L // dinaikkan dari 2ms -- kasih waktu printer proses buffer
 
     private lateinit var appContext: Context
@@ -60,7 +60,30 @@ object NativeBleTransport {
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
     private var negotiatedMtu: Int = DEFAULT_MTU
     private var writeLatch: CountDownLatch? = null
+    private var mtuChangedLatch: CountDownLatch? = null
     private var writeSuccess: Boolean = false
+    private var lastGattWriteStatus: Int = -1
+
+    /** Terjemahkan kode status GATT ke pesan manusiawi -- kode-kode ini
+     * datang dari BluetoothGatt Android SDK (banyak yang tidak
+     * didokumentasikan resmi dengan jelas, tapi umum dikenal di ekosistem
+     * BLE Android). Dipakai buat diagnostik yang actionable, bukan cuma
+     * "status gagal" generik. */
+    private fun gattStatusName(status: Int): String = when (status) {
+        0 -> "GATT_SUCCESS"
+        1 -> "GATT_INVALID_HANDLE"
+        2 -> "GATT_READ_NOT_PERMITTED"
+        3 -> "GATT_WRITE_NOT_PERMITTED"
+        5 -> "GATT_INSUFFICIENT_AUTHENTICATION (perlu pairing/bonding?)"
+        6 -> "GATT_REQUEST_NOT_SUPPORTED"
+        7 -> "GATT_INVALID_OFFSET"
+        13 -> "GATT_INVALID_ATTRIBUTE_LENGTH (data lebih besar dari MTU yang disepakati?)"
+        15 -> "GATT_INSUFFICIENT_ENCRYPTION"
+        133 -> "GATT_ERROR (0x85, error umum stack Android -- sering muncul kalau device sibuk/tidak responsif)"
+        137 -> "GATT_CONNECTION_CONGESTED (koneksi padat, kirim terlalu cepat)"
+        257 -> "GATT_FAILURE"
+        else -> "kode tidak dikenal ($status)"
+    }
 
     /** Detail kegagalan write TERAKHIR -- dipakai Python buat pesan error yang
      * jelas ("chunk mana, kenapa gagal") daripada cuma "koneksi terputus?". */
@@ -178,6 +201,10 @@ object NativeBleTransport {
                     // Margin aman 80% dari MTU (mengikuti perilaku transport lama).
                     negotiatedMtu = ((mtu - 3) * 0.8).toInt().coerceAtLeast(20)
                 }
+                // Countdown APA PUN hasilnya (sukses/gagal) -- yang penting
+                // GATT queue sudah bebas dari operasi requestMtu yang
+                // outstanding, supaya write() berikutnya aman dipanggil.
+                mtuChangedLatch?.countDown()
             }
 
             override fun onCharacteristicWrite(
@@ -186,6 +213,7 @@ object NativeBleTransport {
                 status: Int
             ) {
                 writeSuccess = status == BluetoothGatt.GATT_SUCCESS
+                lastGattWriteStatus = status
                 writeLatch?.countDown()
             }
         }
@@ -206,7 +234,33 @@ object NativeBleTransport {
             return false
         }
 
+        // PENTING (fix Juli 2026): requestMtu() adalah operasi GATT ASYNC --
+        // sebelumnya kode langsung lanjut ke findWritableCharacteristic() dan
+        // return true TANPA nunggu callback onMtuChanged() selesai. Ini
+        // melanggar aturan dasar Android BLE: operasi GATT tidak boleh
+        // ditumpuk beruntun sebelum operasi sebelumnya selesai (queue-nya
+        // cuma bisa proses 1 command GATT dalam satu waktu). Begitu write()
+        // dipanggil oleh alur print tak lama setelah connect() return, GATT
+        // stack masih "sibuk" menyelesaikan request MTU yang outstanding --
+        // muncul sebagai GATT_ERROR (133) di write pertama, PERSIS gejala
+        // yang dilaporkan: gagal di chunk offset 0 (chunk PERTAMA).
+        val mtuLatch = CountDownLatch(1)
+        mtuChangedLatch = mtuLatch
         newGatt.requestMtu(247)
+        mtuLatch.await(3, TimeUnit.SECONDS) // kalau device tidak dukung MTU request, timeout wajar & tidak fatal
+
+        // FIX (Juli 2026, lanjutan): walau sudah menunggu callback MTU
+        // selesai (fix sebelumnya), write PERTAMA masih konsisten gagal di
+        // offset 0 (terkonfirmasi via log: gagal baik untuk data 70 byte
+        // maupun 8755 byte -- selalu di percobaan PERTAMA, apa pun ukuran
+        // datanya). Ini gejala yang didokumentasikan luas di banyak
+        // stack Bluetooth Android (khususnya chipset Samsung/Qualcomm
+        // tertentu): GATT queue "kelihatan" bebas dari sisi API
+        // (onMtuChanged sudah fire), tapi controller BLE fisik masih
+        // butuh waktu tambahan untuk benar-benar stabil sebelum write
+        // pertama reliable. Jeda kecil ini adalah workaround yang umum
+        // dipakai komunitas Android BLE untuk kelas masalah ini.
+        Thread.sleep(300)
 
         val characteristic = findWritableCharacteristic(newGatt)
         if (characteristic == null) {
@@ -304,7 +358,7 @@ object NativeBleTransport {
                     if (!completed) {
                         lastAttemptError = "Timeout menunggu onCharacteristicWrite (5 detik)"
                     } else if (!writeSuccess) {
-                        lastAttemptError = "onCharacteristicWrite melaporkan status gagal"
+                        lastAttemptError = "GATT status ${gattStatusName(lastGattWriteStatus)}"
                     } else {
                         chunkSucceeded = true
                     }
@@ -318,7 +372,7 @@ object NativeBleTransport {
 
                 // Backoff singkat sebelum retry -- kasih waktu printer/GATT
                 // stack "napas" sebelum coba lagi.
-                Thread.sleep(50L * attempt)
+                Thread.sleep(150L * attempt) // backoff dinaikkan dari 50ms -- total retry window ~2.25 detik (150+300+450+600+750)
             }
 
             if (!chunkSucceeded) {
