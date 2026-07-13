@@ -71,24 +71,33 @@ class PeriPageA9USB:
             self._transport = None
             return False
 
-    def print_pages(self, pages_to_print, cropped_images_dict):
-        """Mengirim data biner sesuai lebar kertas fisik aktif (self.paper_width_mm)"""
+    def print_pages(self, pages_to_print, cropped_images_dict, force_protocol=None):
+        """Mengirim data biner sesuai lebar kertas fisik aktif (self.paper_width_mm).
+        force_protocol: override manual "raw"/"compressed"/None=auto -- lihat
+        protocol.send_print_job() untuk detail. USB tidak punya device_name
+        (bukan BLE advertised name), jadi auto-detect selalu fallback RAW
+        kecuali di-force manual."""
         if self._transport is None:
             raise Exception("Printer belum terhubung. Panggil fungsi .connect() terlebih dahulu.")
 
         try:
             protocol.send_print_job(
                 self._transport, pages_to_print, cropped_images_dict, self.paper_width_mm,
-                progress_tag="LIBRARY", done_tag="LIBRARY",
+                progress_tag="LIBRARY", done_tag="LIBRARY", force_protocol=force_protocol,
             )
             print("[LIBRARY] Seluruh dokumen sukses dibakar ke kertas thermal!")
         except Exception as e:
             print("\n[LIBRARY ERROR] Kegagalan transmisi data USB:")
             traceback.print_exc()
             raise e
-        finally:
-            # SISTEM AUTO-RESET PORT UNTUK MENCEGAH MACET / RESOURCE BUSY
-            self._transport.close()
+        # PENTING (fix Juli 2026): TIDAK auto-close transport di sini lagi.
+        # Sebelumnya ada `finally: self._transport.close()` yang menutup
+        # koneksi setiap SELESAI 1 print job apa pun hasilnya -- niatnya
+        # "cegah resource busy", tapi efeknya app harus reconnect ulang
+        # setiap mau print lagi walau user sudah connect di Settings dan
+        # printer masih fisik menyala & dalam jangkauan. Sekarang koneksi
+        # tetap terbuka sampai user eksplisit pilih "Putuskan" di Settings
+        # (lihat disconnect_printer() di python_service.py / server.py).
 
 
 class PeriPageA9BLE:
@@ -98,14 +107,19 @@ class PeriPageA9BLE:
     Cocok untuk mobile (Android/iOS) dan desktop dengan Bluetooth.
     """
 
-    def __init__(self, device_address=None, paper_width_mm=None):
+    def __init__(self, device_address=None, device_name=None, paper_width_mm=None):
         """
         Args:
             device_address: MAC address atau UUID device BLE (opsional).
                            Jika None, akan auto-discovery berdasarkan nama.
+            device_name: nama BLE device (dari hasil scan) -- dipakai buat
+                         auto-deteksi protokol RAW vs COMPRESSED (lihat
+                         protocol.uses_compressed_protocol()). Opsional,
+                         None = selalu fallback RAW kecuali di-force manual.
             paper_width_mm: Lebar kertas (58 atau 77mm). Default dari setting tersimpan.
         """
         self.device_address = device_address
+        self.device_name = device_name
         self._transport = None
         self.paper_width_mm = paper_width_mm if paper_width_mm else protocol.load_paper_width_mm()
 
@@ -139,8 +153,10 @@ class PeriPageA9BLE:
             self._transport = None
             return False
 
-    def print_pages(self, pages_to_print, cropped_images_dict):
-        """Kirim data print ke printer via BLE."""
+    def print_pages(self, pages_to_print, cropped_images_dict, force_protocol=None):
+        """Kirim data print ke printer via BLE. force_protocol: override
+        manual "raw"/"compressed"/None=auto-detect dari self.device_name --
+        lihat protocol.send_print_job() untuk detail."""
         if self._transport is None:
             raise Exception("Printer belum terhubung. Panggil fungsi .connect() terlebih dahulu.")
 
@@ -148,11 +164,14 @@ class PeriPageA9BLE:
             protocol.send_print_job(
                 self._transport, pages_to_print, cropped_images_dict, self.paper_width_mm,
                 progress_tag="LIBRARY-BLE", done_tag="LIBRARY-BLE",
+                device_name=self.device_name, force_protocol=force_protocol,
             )
             print("[LIBRARY-BLE] Dokumen sukses dicetak via BLE!")
         except Exception as e:
             print("\n[LIBRARY-BLE ERROR] Kegagalan transmisi data BLE:")
             traceback.print_exc()
             raise e
-        finally:
-            self._transport.close()
+        # PENTING (fix Juli 2026): TIDAK auto-close transport lagi -- lihat
+        # komentar panjang di PeriPageA9USB.print_pages() di atas, alasannya
+        # sama persis. Auto-close di sini yang bikin BLE "koneksi terputus"
+        # tiap mau print job ke-2 dst walau device masih fisik terhubung.

@@ -18,6 +18,7 @@ HANYA cara pengiriman byte-nya: dari `ep_out.write(...)` langsung jadi
 import os
 import json
 import time
+import zlib
 import traceback
 from PIL import Image, ImageChops
 
@@ -45,6 +46,92 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, "settings.json")
 # 70-75 pada mode kertas 77mm -> dipakai 70 byte (560px) sebagai batas aman.
 CALIBRATED_BYTES_PER_ROW = {77: 70}
 # =====================================================================
+
+
+# =====================================================================
+# PILIHAN PROTOKOL: RAW vs COMPRESSED
+#
+# Hasil reverse-engineering app resmi PeriPage (method `u0.h.l()`, lihat
+# PERIPAGE_PROTOCOL.md yang diberikan pengguna, Juli 2026): printer
+# generasi baru (A9 dst) sebenarnya menerima bitmap TERKOMPRESI zlib
+# (header `1F 00 ...`), BUKAN format RAW 1bpp polos (header `1D 76 30`)
+# yang sejauh ini dipakai fungsi ini untuk SEMUA device.
+#
+# PENTING -- KEPUTUSAN DESAIN: mode RAW (di bawah) TIDAK DIUBAH SAMA
+# SEKALI, tetap jadi DEFAULT untuk device yang tidak match persis daftar
+# resmi -- karena RAW sudah terbukti menghasilkan print fisik yang benar
+# (sudah dikalibrasi & di-screenshot sukses). Matching device compressed
+# SENGAJA ketat (persis seperti kode asli u0.h.l(), tidak ada heuristik
+# tambahan seperti strip suffix "_BLE") karena salah pilih protokol bisa
+# bikin hasil cetak rusak/blank total, dan itu tidak bisa saya verifikasi
+# tanpa akses ke hardware fisik. Device dengan nama tidak match persis
+# (termasuk "PeriPage_A9_BLE") tetap dapat RAW secara default, TAPI bisa
+# di-force manual lewat parameter `force_protocol` (diekspos ke UI lewat
+# Settings > Protokol Cetak) supaya user yang PUNYA unit fisik bisa tes
+# & verifikasi sendiri mode mana yang benar untuk device mereka.
+# =====================================================================
+COMPRESSED_MODE_EXACT_NAMES = {
+    "PeriPage_A9", "PeriPage_A9+", "PeriPage_A9Pro+", "PeriPage_A9s",
+    "PeriPage_Q9s", "PeriPage_A9sMAX", "PeriPage_A9MAX", "PeriPage_Q9Pro+",
+    "PeriPage_Q10s", "PeriPage_A40", "PeriPage_H2", "PeriPage_H2+",
+    "PeriPage_P40", "PeriPage_P9", "SQAI_PP_G10", "SQAI_PP_G40",
+    "PeriPage_A3X", "PeriPage_A3X+", "PeriPage_A40+", "PeriPage_A40Pro+",
+    "PeriPage_A40Pro", "PeriPage_Y200", "PeriPage_Y200+",
+}
+COMPRESSED_MODE_PREFIXES = (
+    "PeriPage_A8_", "PeriPage_A8+", "PRT1_", "PPG_P40W", "PPG_P40",
+)
+
+
+def uses_compressed_protocol(device_name) -> bool:
+    """
+    True kalau nama device COCOK PERSIS dengan daftar resmi printer yang
+    pakai protokol COMPRESSED (zlib) -- lihat komentar arsitektur di atas.
+    """
+    if not device_name:
+        return False
+    if device_name in COMPRESSED_MODE_EXACT_NAMES:
+        return True
+    return any(device_name.startswith(p) for p in COMPRESSED_MODE_PREFIXES)
+
+
+def _pack_bitmap_1bpp(bw_img, target_width_px, height):
+    """
+    Bit-packing 1bpp MSB-first per baris, dipadatkan ke target_width_px
+    (lebar kertas fisik AKTIF, bukan lebar mentah gambar) -- logic BYTE-
+    FOR-BYTE SAMA dengan cara mode RAW membangun row_bytes di bawah, cuma
+    hasilnya diakumulasi jadi satu buffer besar (buat di-zlib) alih-alih
+    ditulis baris per baris. Ini menjamin kedua mode WYSIWYG-konsisten:
+    crop & bit pattern-nya identik, bedanya cuma kompresi + cara kirim.
+    """
+    row_bytes_count = target_width_px // 8
+    img_width, _ = bw_img.size
+    out = bytearray(row_bytes_count * height)
+    for y in range(height):
+        for x in range(0, target_width_px, 8):
+            byte_val = 0
+            for bit in range(8):
+                px_x = x + bit
+                if px_x < img_width and bw_img.getpixel((px_x, y)) == 0:  # 0 = hitam
+                    byte_val |= (1 << (7 - bit))
+            out[y * row_bytes_count + (x // 8)] = byte_val
+    return bytes(out)
+
+
+def _build_compressed_page_packet(width_dots, height, bitmap_1bpp):
+    """Header `1F 00` + payload zlib (2-byte header zlib CMF+FLG dibuang) --
+    format resmi printer generasi baru (A9 dst). Lihat PERIPAGE_PROTOCOL.md
+    §2.2 & §3 untuk detail hasil reverse-engineering-nya."""
+    compressed = zlib.compress(bitmap_1bpp)[2:]
+    length = len(compressed)
+    header = bytes([
+        0x1f, 0x00,
+        (width_dots >> 8) & 0xff, width_dots & 0xff,
+        (height >> 8) & 0xff, height & 0xff,
+        (length >> 24) & 0xff, (length >> 16) & 0xff,
+        (length >> 8) & 0xff, length & 0xff,
+    ])
+    return header + compressed
 
 
 def get_paper_dimensions(paper_width_mm):
@@ -185,66 +272,95 @@ def smart_crop_and_resize(pil_img, paper_width_mm=DEFAULT_PAPER_WIDTH_MM, error_
 
 
 def send_print_job(transport, pages_to_print, cropped_images_dict, paper_width_mm=DEFAULT_PAPER_WIDTH_MM,
-                    progress_tag="SISTEM", done_tag="LOGIC"):
+                    progress_tag="SISTEM", done_tag="LOGIC", device_name=None, force_protocol=None):
     """
     Membangun & mengirim urutan byte protokol PeriPage A9 lewat `transport`.
 
     `transport` harus punya method `.write(data: bytes)` -- bisa diisi
-    UsbTransport atau (nanti) BluetoothTransport, keduanya harus sudah dalam
+    UsbTransport atau BluetoothTransport, keduanya harus sudah dalam
     keadaan `connect()`-ed sebelum fungsi ini dipanggil.
 
-    Isi fungsi ini adalah pindahan 1:1 dari execute_printing() versi lama:
-    HANYA `ep_out.write(...)` yang diganti `transport.write(...)`. Urutan
-    command, nilai byte, dan seluruh `time.sleep(...)` (jeda yang dibutuhkan
-    hardware printer, bukan spesifik USB) tetap persis sama.
+    RAW mode (default, TIDAK DIUBAH dari implementasi lama): pindahan 1:1
+    dari execute_printing() versi lama, HANYA `ep_out.write(...)` yang
+    diganti `transport.write(...)`. Urutan command, nilai byte, dan seluruh
+    `time.sleep(...)` tetap persis sama -- ini yang sudah terbukti jalan
+    lewat kalibrasi fisik & print sukses.
 
-    `progress_tag` / `done_tag` cuma memengaruhi label di console log (mis.
-    peripage_logic.py pakai "SISTEM"/"LOGIC", package peripage_a9 pakai
-    "LIBRARY"/"LIBRARY") -- tidak memengaruhi byte yang dikirim ke printer.
+    COMPRESSED mode (baru, Juli 2026): dipilih otomatis kalau `device_name`
+    match persis daftar resmi (lihat uses_compressed_protocol()), atau
+    dipaksa manual lewat `force_protocol` ("raw"|"compressed"|None=auto).
+    Kirim SATU packet berisi bitmap zlib-compressed per halaman (bukan
+    ribuan write per baris) -- lihat PERIPAGE_PROTOCOL.md §2.2/§3.
+
+    `progress_tag` / `done_tag` cuma memengaruhi label di console log --
+    tidak memengaruhi byte yang dikirim ke printer.
     """
+    if force_protocol == "compressed":
+        use_compressed = True
+    elif force_protocol == "raw":
+        use_compressed = False
+    else:
+        use_compressed = uses_compressed_protocol(device_name)
+
     paper_width_px, bytes_per_row = get_paper_dimensions(paper_width_mm)
 
-    # JABAT TANGAN UTAMA PERIPAGE A9
+    # JABAT TANGAN UTAMA PERIPAGE A9 (TIDAK DIUBAH -- sudah terbukti jalan
+    # lewat kalibrasi fisik, lihat CALIBRATED_BYTES_PER_ROW di atas). Sama
+    # dipakai untuk KEDUA mode -- ini handshake koneksi, bukan bagian dari
+    # format encoding bitmap.
     init_bytes = [0x10, 0xff, 0xfe, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
     transport.write(bytes(init_bytes))
     time.sleep(0.2)
 
     for idx in pages_to_print:
-        print(f"[{progress_tag}] Mengirim data biner Halaman {idx+1}... (kertas {paper_width_mm}mm)")
+        protocol_label = "COMPRESSED" if use_compressed else "RAW"
+        print(f"[{progress_tag}] Mengirim data biner Halaman {idx+1}... (kertas {paper_width_mm}mm, protokol {protocol_label})")
         final_img = cropped_images_dict[idx]
 
         bw_img = final_img.convert("1")
         width, height = bw_img.size
 
-        # PACKET HEADER HALAMAN
-        page_header = bytearray([
-            0x1d, 0x76, 0x30, 0x00,
-            bytes_per_row & 0xff, (bytes_per_row >> 8) & 0xff,
-            height & 0xff, (height >> 8) & 0xff
-        ])
-        transport.write(bytes(page_header))
-        time.sleep(0.1)
+        if use_compressed:
+            # ================================================================
+            # MODE COMPRESSED: bangun 1 buffer bitmap penuh, zlib-compress,
+            # kirim SATU packet (header 1F 00 + payload) -- bukan ribuan
+            # write per baris seperti RAW. Ini juga mengurangi jumlah
+            # operasi transport (khususnya BLE) per halaman secara drastis.
+            # ================================================================
+            bitmap_1bpp = _pack_bitmap_1bpp(bw_img, paper_width_px, height)
+            packet = _build_compressed_page_packet(paper_width_px, height, bitmap_1bpp)
+            transport.write(packet)
+            time.sleep(0.1)
+        else:
+            # ================================================================
+            # MODE RAW (default, TIDAK DIUBAH): kirim header lalu bitmap
+            # baris-per-baris, persis seperti implementasi lama.
+            # ================================================================
+            page_header = bytearray([
+                0x1d, 0x76, 0x30, 0x00,
+                bytes_per_row & 0xff, (bytes_per_row >> 8) & 0xff,
+                height & 0xff, (height >> 8) & 0xff
+            ])
+            transport.write(bytes(page_header))
+            time.sleep(0.1)
 
-        # =====================================================================
-        # KIRIM KONTEN APA ADANYA (sesuai lebar kertas fisik aktif, WYSIWYG dengan preview smartcrop)
-        # =====================================================================
-        for y in range(height):
-            row_bytes = bytearray()
+            for y in range(height):
+                row_bytes = bytearray()
 
-            for x in range(0, paper_width_px, 8):
-                byte_val = 0
-                for bit in range(8):
-                    if x + bit < width:
-                        pixel = bw_img.getpixel((x + bit, y))
-                        if pixel == 0:  # 0 = Hitam
-                            byte_val |= (1 << (7 - bit))
-                row_bytes.append(byte_val)
+                for x in range(0, paper_width_px, 8):
+                    byte_val = 0
+                    for bit in range(8):
+                        if x + bit < width:
+                            pixel = bw_img.getpixel((x + bit, y))
+                            if pixel == 0:  # 0 = Hitam
+                                byte_val |= (1 << (7 - bit))
+                    row_bytes.append(byte_val)
 
-            # Kirim baris persis sesuai lebar kertas fisik aktif
-            transport.write(bytes(row_bytes))
-            time.sleep(0.005)
+                transport.write(bytes(row_bytes))
+                time.sleep(0.005)
 
-        # Perintah gulung kertas maju di akhir halaman (ESC J 64)
+        # Perintah gulung kertas maju di akhir halaman (ESC J 64) -- SAMA
+        # untuk kedua mode (perintah generik, bukan bagian format bitmap).
         transport.write(bytes([0x1b, 0x4a, 0x40]))
         time.sleep(0.5)
 

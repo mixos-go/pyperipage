@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/printer_models.dart';
 import '../core/services/api_service.dart';
 import '../services/desktop_backend_service.dart';
@@ -12,6 +13,42 @@ class PrinterProvider with ChangeNotifier {
   PrinterProvider({ApiService? apiService}) 
       : _apiService = apiService ?? ApiService() {
     _loadRecentFiles();
+    _loadProtocolOverride();
+  }
+
+  static const _protocolOverridePrefsKey = 'protocol_override';
+
+  /// Override manual protokol print: null/"auto" = auto-detect dari nama
+  /// device (default, aman), "raw" atau "compressed" = paksa mode
+  /// tertentu terlepas dari hasil deteksi -- dipakai user buat TES sendiri
+  /// mode mana yang benar untuk device mereka (lihat PERIPAGE_PROTOCOL.md,
+  /// hasil reverse-engineering, Juli 2026). Persisted antar sesi.
+  String? _protocolOverride;
+  String? get protocolOverride => _protocolOverride;
+
+  Future<void> _loadProtocolOverride() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _protocolOverride = prefs.getString(_protocolOverridePrefsKey);
+      notifyListeners();
+    } catch (_) {
+      // Gagal baca preference -- fallback ke auto (null), tidak fatal.
+    }
+  }
+
+  Future<void> setProtocolOverride(String? mode) async {
+    _protocolOverride = mode;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (mode == null) {
+        await prefs.remove(_protocolOverridePrefsKey);
+      } else {
+        await prefs.setString(_protocolOverridePrefsKey, mode);
+      }
+    } catch (_) {
+      // Gagal simpan -- override tetap berlaku untuk sesi ini, cuma tidak persist.
+    }
   }
 
   final RecentFilesService _recentFilesService = RecentFilesService();
@@ -253,12 +290,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Print single image
-  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true, CropRect? cropRect}) async {
+  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true, CropRect? cropRect, String? protocolOverride}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.printImage(imageFile, paperWidthMm: paperWidthMm, smartCrop: smartCrop, cropRect: cropRect);
+      await _apiService.printImage(imageFile, paperWidthMm: paperWidthMm, smartCrop: smartCrop, cropRect: cropRect, protocolOverride: protocolOverride ?? _protocolOverride);
       _errorMessage = null;
       _errorDetails = null;
       return true;
@@ -272,12 +309,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Print PDF
-  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects}) async {
+  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects, String? protocolOverride}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.printPdf(pdfFile, pages, paperWidthMm: paperWidthMm, smartCrop: smartCrop, cropRects: cropRects);
+      await _apiService.printPdf(pdfFile, pages, paperWidthMm: paperWidthMm, smartCrop: smartCrop, cropRects: cropRects, protocolOverride: protocolOverride ?? _protocolOverride);
       _errorMessage = null;
       _errorDetails = null;
       return true;
@@ -291,12 +328,12 @@ class PrinterProvider with ChangeNotifier {
   }
 
   /// Print batch
-  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects}) async {
+  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects, String? protocolOverride}) async {
     _isLoading = true;
     notifyListeners();
     
     try {
-      await _apiService.printBatch(files, paperWidthMm: paperWidthMm, smartCrop: smartCrop, cropRects: cropRects);
+      await _apiService.printBatch(files, paperWidthMm: paperWidthMm, smartCrop: smartCrop, cropRects: cropRects, protocolOverride: protocolOverride ?? _protocolOverride);
       _errorMessage = null;
       _errorDetails = null;
       return true;

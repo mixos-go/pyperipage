@@ -37,6 +37,9 @@ from peripage_a9 import (
     smart_crop_and_resize,
     resize_to_paper_width,
     crop_to_rect,
+    has_barcode,
+    barcode_availability_error,
+    uses_compressed_protocol,
 )
 
 try:
@@ -81,6 +84,7 @@ class PrinterStatus(BaseModel):
     message: str
     device_address: Optional[str] = None
     device_name: Optional[str] = None
+    detected_protocol: Optional[str] = None
 
 
 class PrintRequest(BaseModel):
@@ -173,6 +177,7 @@ async def get_status():
         paper_width_mm=load_paper_width_mm(),
         device_address=current_device_address if connected else None,
         device_name=current_device_name if connected else None,
+        detected_protocol=("compressed" if uses_compressed_protocol(current_device_name) else "raw") if connected else None,
         message=message
     )
 
@@ -202,7 +207,10 @@ async def connect_ble(request: Optional[BleConnectRequest] = None):
     device_address = request.device_address if request else None
     device_name = request.device_name if request else None
     current_transport = "ble"
-    printer_ble = PeriPageA9BLE(device_address=device_address)
+    # device_name diteruskan ke driver -- dipakai auto-deteksi protokol
+    # RAW vs COMPRESSED (lihat protocol.uses_compressed_protocol(),
+    # hasil reverse-engineering PERIPAGE_PROTOCOL.md, Juli 2026).
+    printer_ble = PeriPageA9BLE(device_address=device_address, device_name=device_name)
     
     success = printer_ble.connect()
     
@@ -277,6 +285,29 @@ async def get_paper_width():
     }
 
 
+@app.post("/api/check-barcodes")
+async def check_barcodes(images: List[UploadFile] = File(...)):
+    """
+    Dipakai ApiService.checkPagesForBarcode() -- fitur "Auto-deselect
+    halaman tanpa barcode" di Print Screen. Terima beberapa file gambar
+    (satu per halaman/file), return list boolean sejajar urutan upload-nya
+    (True = ada barcode terdeteksi, False = tidak ada).
+    """
+    availability_error = barcode_availability_error()
+    if availability_error:
+        raise HTTPException(status_code=503, detail=availability_error)
+
+    try:
+        results = []
+        for image in images:
+            contents = await image.read()
+            img = Image.open(io.BytesIO(contents))
+            results.append(has_barcode(img))
+        return {"status": "success", "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/preview/image")
 async def preview_image(
     image: UploadFile = File(...),
@@ -329,6 +360,7 @@ async def print_image(
     crop_top: Optional[float] = Form(None),
     crop_right: Optional[float] = Form(None),
     crop_bottom: Optional[float] = Form(None),
+    protocol_override: Optional[str] = Form(None),
 ):
     """Print gambar langsung."""
     try:
@@ -355,7 +387,7 @@ async def print_image(
                 raise HTTPException(status_code=400, detail="Gagal koneksi ke printer")
         
         # Print
-        printer.print_pages([0], {0: cropped_img})
+        printer.print_pages([0], {0: cropped_img}, force_protocol=protocol_override)
         
         return {"status": "success", "message": "Gambar sukses dicetak"}
         
@@ -371,6 +403,7 @@ async def print_pdf(
     paper_width_mm: Optional[int] = Form(None),
     smart_crop: bool = Form(True),
     crop_rects_json: Optional[str] = Form(None),  # JSON: {"0": {"left":.., "top":.., "right":.., "bottom":..}, ...}
+    protocol_override: Optional[str] = Form(None),
 ):
     """
     Print PDF. 
@@ -417,7 +450,7 @@ async def print_pdf(
                     cropped_images[idx] = printer.smart_crop_and_resize(page_img, use_smart_crop=smart_crop)
             
             # Print
-            printer.print_pages(page_indices, cropped_images)
+            printer.print_pages(page_indices, cropped_images, force_protocol=protocol_override)
             
             return {"status": "success", "message": f"Sukses cetak {len(page_indices)} halaman"}
             
@@ -436,6 +469,7 @@ async def print_batch(
     paper_width_mm: Optional[int] = Form(None),
     smart_crop: bool = Form(True),
     crop_rects_json: Optional[str] = Form(None),  # JSON: {"0": {...}, "1": {...}} key = index file
+    protocol_override: Optional[str] = Form(None),
 ):
     """
     Print multiple files (gambar atau PDF) sekaligus.
@@ -488,7 +522,7 @@ async def print_batch(
         
         # Print semua
         pages_dict = {i: img for i, img in enumerate(all_images)}
-        printer.print_pages(list(range(len(all_images))), pages_dict)
+        printer.print_pages(list(range(len(all_images))), pages_dict, force_protocol=protocol_override)
         
         return {"status": "success", "message": f"Sukses cetak {len(all_images)} halaman"}
         

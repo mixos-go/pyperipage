@@ -102,6 +102,11 @@ class MainActivity: FlutterActivity() {
                     handlePythonCall("set_paper_width", result, widthMm)
                 }
 
+                "checkPagesForBarcode" -> {
+                    val imagesBase64 = call.argument<List<String>>("imagesBase64") ?: listOf()
+                    handlePythonCall("check_pages_for_barcode", result, imagesBase64)
+                }
+
                 "previewImage" -> {
                     val imagePath = call.argument<String>("imagePath")
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
@@ -115,7 +120,8 @@ class MainActivity: FlutterActivity() {
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
                     val smartCrop = call.argument<Boolean>("smartCrop") ?: true
                     val cropRect = call.argument<Map<String, Any?>>("cropRect")
-                    handlePythonCall("print_image", result, imagePath, paperWidthMm, smartCrop, cropRect)
+                    val protocolOverride = call.argument<String>("protocolOverride")
+                    handlePythonCall("print_image", result, imagePath, paperWidthMm, smartCrop, cropRect, protocolOverride)
                 }
 
                 "printPdfPages" -> {
@@ -127,7 +133,8 @@ class MainActivity: FlutterActivity() {
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
                     val smartCrop = call.argument<Boolean>("smartCrop") ?: true
                     val cropRects = call.argument<Map<String, Any?>>("cropRects")
-                    handlePythonCall("print_pdf_pages", result, imagePaths, pages, paperWidthMm, smartCrop, cropRects)
+                    val protocolOverride = call.argument<String>("protocolOverride")
+                    handlePythonCall("print_pdf_pages", result, imagePaths, pages, paperWidthMm, smartCrop, cropRects, protocolOverride)
                 }
 
                 "printBatch" -> {
@@ -135,7 +142,8 @@ class MainActivity: FlutterActivity() {
                     val paperWidthMm = call.argument<Int>("paperWidthMm")
                     val smartCrop = call.argument<Boolean>("smartCrop") ?: true
                     val cropRects = call.argument<Map<String, Any?>>("cropRects")
-                    handlePythonCall("print_batch", result, filePaths, paperWidthMm, smartCrop, cropRects)
+                    val protocolOverride = call.argument<String>("protocolOverride")
+                    handlePythonCall("print_batch", result, filePaths, paperWidthMm, smartCrop, cropRects, protocolOverride)
                 }
 
                 else -> {

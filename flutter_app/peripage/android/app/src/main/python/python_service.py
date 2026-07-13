@@ -27,6 +27,7 @@ from PIL import Image
 
 from peripage_a9.driver import PeriPageA9USB, PeriPageA9BLE
 from peripage_a9 import protocol
+from peripage_a9 import barcode_detect
 
 # Instance driver aktif (USB atau BLE), None kalau belum connect
 _driver = None
@@ -68,7 +69,10 @@ def connect_ble(device_address: str = None, device_name: str = None) -> dict:
     global _driver, _transport_type, _device_address, _device_name
     try:
         _transport_type = "ble"
-        _driver = PeriPageA9BLE(device_address=device_address)
+        # device_name diteruskan ke driver -- dipakai auto-deteksi protokol
+        # RAW vs COMPRESSED (lihat protocol.uses_compressed_protocol(),
+        # hasil reverse-engineering PERIPAGE_PROTOCOL.md, Juli 2026).
+        _driver = PeriPageA9BLE(device_address=device_address, device_name=device_name)
         ok = _driver.connect()
         if not ok:
             _driver = None
@@ -120,6 +124,11 @@ def get_printer_status() -> dict:
         "message": "Terhubung" if connected else "Belum terhubung",
         "device_address": _device_address if connected else None,
         "device_name": _device_name if connected else None,
+        # Protokol yang AKAN dipakai otomatis kalau print tanpa force_protocol
+        # -- dari reverse-engineering PERIPAGE_PROTOCOL.md (Juli 2026).
+        # Ditampilkan di Settings biar user tahu mode mana yang aktif,
+        # dan bisa cross-check kalau perlu override manual.
+        "detected_protocol": ("compressed" if protocol.uses_compressed_protocol(_device_name) else "raw") if connected else None,
     }
 
 
@@ -188,6 +197,28 @@ def _image_to_base64_png(img: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def check_pages_for_barcode(images_base64: list) -> dict:
+    """
+    Dipakai ApiService.checkPagesForBarcode() -- fitur "Auto-deselect
+    halaman tanpa barcode" di Print Screen. Terima list gambar base64
+    (satu per halaman/file), return list boolean sejajar index-nya (True
+    = ada barcode terdeteksi, False = tidak ada).
+
+    Modul terpisah (peripage_a9.barcode_detect) SENGAJA dipisah dari logic
+    print/crop lain -- lihat docstring di barcode_detect.py untuk alasan
+    arsitekturnya (kelas masalah sama dengan pymupdf/pyusb/bleak).
+    """
+    try:
+        results = []
+        for b64_str in images_base64:
+            img_bytes = base64.b64decode(b64_str)
+            img = Image.open(io.BytesIO(img_bytes))
+            results.append(barcode_detect.has_barcode(img))
+        return {"status": "ok", "results": results}
+    except Exception as e:
+        return _err(e)
+
+
 def preview_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = True, crop_rect: dict = None) -> dict:
     """Dipakai ApiService.previewImage() -- return base64 PNG hasil crop,
     TANPA mengirim apapun ke printer (murni preview). `smart_crop=False`
@@ -207,7 +238,7 @@ def preview_image(image_path: str, paper_width_mm: int = None, smart_crop: bool 
         return _err(e)
 
 
-def print_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = True, crop_rect: dict = None) -> dict:
+def print_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = True, crop_rect: dict = None, protocol_override: str = None) -> dict:
     """Dipakai ApiService.printImage(File)."""
     global _driver
     if _driver is None:
@@ -220,13 +251,13 @@ def print_image(image_path: str, paper_width_mm: int = None, smart_crop: bool = 
         img = Image.open(image_path)
         img = _apply_manual_crop(img, crop_rect)
         cropped = _driver.smart_crop_and_resize(img, use_smart_crop=smart_crop)
-        _driver.print_pages([0], {0: cropped})
+        _driver.print_pages([0], {0: cropped}, force_protocol=protocol_override)
         return {"status": "ok"}
     except Exception as e:
         return _err(e)
 
 
-def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None, smart_crop: bool = True, crop_rects: dict = None) -> dict:
+def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None, smart_crop: bool = True, crop_rects: dict = None, protocol_override: str = None) -> dict:
     """
     Dipakai ApiService.printPdf(File, List<int> pages) di Android/iOS.
 
@@ -265,13 +296,13 @@ def print_pdf_pages(image_paths: list, pages: list, paper_width_mm: int = None, 
             img = _apply_manual_crop(img, rect)
             cropped_images[page_idx] = _driver.smart_crop_and_resize(img, use_smart_crop=smart_crop)
 
-        _driver.print_pages(pages, cropped_images)
+        _driver.print_pages(pages, cropped_images, force_protocol=protocol_override)
         return {"status": "ok"}
     except Exception as e:
         return _err(e)
 
 
-def print_batch(file_paths: list, paper_width_mm: int = None, smart_crop: bool = True, crop_rects: dict = None) -> dict:
+def print_batch(file_paths: list, paper_width_mm: int = None, smart_crop: bool = True, crop_rects: dict = None, protocol_override: str = None) -> dict:
     """Dipakai ApiService.printBatch(List<File>) -- cetak beberapa file gambar berurutan."""
     global _driver
     if _driver is None:
@@ -289,7 +320,7 @@ def print_batch(file_paths: list, paper_width_mm: int = None, smart_crop: bool =
             img = _apply_manual_crop(img, rect)
             cropped_images[idx] = _driver.smart_crop_and_resize(img, use_smart_crop=smart_crop)
 
-        _driver.print_pages(list(range(len(file_paths))), cropped_images)
+        _driver.print_pages(list(range(len(file_paths))), cropped_images, force_protocol=protocol_override)
         return {"status": "ok"}
     except Exception as e:
         return _err(e)

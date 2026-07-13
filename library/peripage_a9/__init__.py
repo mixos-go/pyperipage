@@ -15,9 +15,11 @@ from .protocol import (
     smart_crop_and_resize,
     resize_to_paper_width,
     crop_to_rect,
+    uses_compressed_protocol,
 )
 from .transport_usb import UsbTransport, TransportError as UsbTransportError
 from .transport_ble import BleTransport, TransportError as BleTransportError
+from .barcode_detect import has_barcode, barcode_availability_error
 
 __version__ = "2.0.0"
 __all__ = [
@@ -35,4 +37,7 @@ __all__ = [
     "smart_crop_and_resize",
     "resize_to_paper_width",
     "crop_to_rect",
+    "uses_compressed_protocol",
+    "has_barcode",
+    "barcode_availability_error",
 ]

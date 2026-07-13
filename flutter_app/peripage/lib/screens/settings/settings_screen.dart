@@ -174,6 +174,54 @@ class SettingsScreen extends StatelessWidget {
 
           const SizedBox(height: UiConstants.spacingMd),
 
+          // Protokol Cetak (Lanjutan) -- override manual RAW/COMPRESSED.
+          // Lihat PERIPAGE_PROTOCOL.md (hasil reverse-engineering app
+          // resmi PeriPage, Juli 2026): printer generasi baru (A9 dst)
+          // sebenarnya pakai bitmap TERKOMPRESI (zlib), bukan RAW seperti
+          // yang sejauh ini dipakai app ini untuk semua device. Auto-detect
+          // cuma jalan kalau nama device COCOK PERSIS daftar resmi -- untuk
+          // device dengan nama custom/varian (mis. "..._BLE"), user bisa
+          // paksa manual di sini & verifikasi sendiri mana yang benar.
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(UiConstants.spacingLg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Protokol Cetak (Lanjutan)', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: UiConstants.spacingXs),
+                  Text(
+                    'Auto biasanya sudah benar. Kalau hasil cetak terlihat rusak/blank, '
+                    'coba paksa mode lain di sini untuk device kamu.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  if (provider.isConnected && status?.detectedProtocol != null) ...[
+                    const SizedBox(height: UiConstants.spacingSm),
+                    Text(
+                      'Terdeteksi otomatis untuk device ini: ${status!.detectedProtocol!.toUpperCase()}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
+                    ),
+                  ],
+                  const SizedBox(height: UiConstants.spacingMd),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'auto', label: Text('Auto')),
+                      ButtonSegment(value: 'raw', label: Text('RAW')),
+                      ButtonSegment(value: 'compressed', label: Text('Compressed')),
+                    ],
+                    selected: {provider.protocolOverride ?? 'auto'},
+                    onSelectionChanged: (selection) {
+                      final value = selection.first;
+                      provider.setProtocolOverride(value == 'auto' ? null : value);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: UiConstants.spacingMd),
+
           // Tema
           Card(
             child: Padding(

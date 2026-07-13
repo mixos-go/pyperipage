@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import '../utils/app_logger.dart';
 import 'package:http/http.dart' as http;
@@ -230,6 +231,34 @@ class ApiService {
     }
   }
 
+  /// Cek keberadaan barcode/QR di setiap gambar (satu per halaman/file) --
+  /// dipakai fitur "Auto-deselect halaman tanpa barcode" di Print Screen.
+  /// Return list boolean sejajar urutan `images` (true = ada barcode).
+  Future<List<bool>> checkPagesForBarcode(List<Uint8List> images) async {
+    if (_isMobile) {
+      final imagesBase64 = images.map((bytes) => base64Encode(bytes)).toList();
+      final data = await _invokeNative('checkPagesForBarcode', {'imagesBase64': imagesBase64});
+      return (data['results'] as List).map((e) => e as bool).toList();
+    }
+    var request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/api/check-barcodes'),
+    );
+    for (int i = 0; i < images.length; i++) {
+      request.files.add(http.MultipartFile.fromBytes('images', images[i], filename: 'page_$i.png'));
+    }
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return (data['results'] as List).map((e) => e as bool).toList();
+    } else if (response.statusCode == 503) {
+      throw Exception(json.decode(response.body)['detail'] ?? 'Deteksi barcode tidak tersedia di sistem ini.');
+    } else {
+      throw Exception('Gagal cek barcode.');
+    }
+  }
+
   Future<String> previewImage(File imageFile, {int? paperWidthMm, bool smartCrop = true, CropRect? cropRect}) async {
     if (_isMobile) {
       final data = await _invokeNative('previewImage', {
@@ -268,13 +297,14 @@ class ApiService {
     }
   }
 
-  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true, CropRect? cropRect}) async {
+  Future<bool> printImage(File imageFile, {int? paperWidthMm, bool smartCrop = true, CropRect? cropRect, String? protocolOverride}) async {
     if (_isMobile) {
       await _invokeNative('printImage', {
         'imagePath': imageFile.path,
         'paperWidthMm': paperWidthMm,
         'smartCrop': smartCrop,
         'cropRect': cropRect?.toJson(),
+        'protocolOverride': protocolOverride,
       });
       return true;
     }
@@ -285,6 +315,7 @@ class ApiService {
 
     request.files.add(await http.MultipartFile.fromPath('image', imageFile.path));
     request.fields['smart_crop'] = smartCrop.toString();
+    if (protocolOverride != null) request.fields['protocol_override'] = protocolOverride;
     if (cropRect != null && !cropRect.isFullImage) {
       request.fields['crop_left'] = cropRect.left.toString();
       request.fields['crop_top'] = cropRect.top.toString();
@@ -345,7 +376,7 @@ class ApiService {
     return imagePaths;
   }
 
-  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects}) async {
+  Future<bool> printPdf(File pdfFile, List<int> pages, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects, String? protocolOverride}) async {
     if (_isMobile) {
       // Rasterisasi PDF->gambar di Dart (pdfx/PDFium) dulu, karena
       // python_service.py di Android tidak bisa pasang PyMuPDF (fitz) --
@@ -359,6 +390,7 @@ class ApiService {
         'paperWidthMm': paperWidthMm,
         'smartCrop': smartCrop,
         'cropRects': cropRects?.map((k, v) => MapEntry(k.toString(), v.toJson())),
+        'protocolOverride': protocolOverride,
       });
       return true;
     }
@@ -373,6 +405,7 @@ class ApiService {
     if (cropRects != null && cropRects.isNotEmpty) {
       request.fields['crop_rects_json'] = json.encode(cropRects.map((k, v) => MapEntry(k.toString(), v.toJson())));
     }
+    if (protocolOverride != null) request.fields['protocol_override'] = protocolOverride;
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();
@@ -388,13 +421,14 @@ class ApiService {
     }
   }
 
-  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects}) async {
+  Future<bool> printBatch(List<File> files, {int? paperWidthMm, bool smartCrop = true, Map<int, CropRect>? cropRects, String? protocolOverride}) async {
     if (_isMobile) {
       await _invokeNative('printBatch', {
         'filePaths': files.map((f) => f.path).toList(),
         'paperWidthMm': paperWidthMm,
         'smartCrop': smartCrop,
         'cropRects': cropRects?.map((k, v) => MapEntry(k.toString(), v.toJson())),
+        'protocolOverride': protocolOverride,
       });
       return true;
     }
@@ -410,6 +444,7 @@ class ApiService {
     if (cropRects != null && cropRects.isNotEmpty) {
       request.fields['crop_rects_json'] = json.encode(cropRects.map((k, v) => MapEntry(k.toString(), v.toJson())));
     }
+    if (protocolOverride != null) request.fields['protocol_override'] = protocolOverride;
 
     if (paperWidthMm != null) {
       request.fields['paper_width_mm'] = paperWidthMm.toString();

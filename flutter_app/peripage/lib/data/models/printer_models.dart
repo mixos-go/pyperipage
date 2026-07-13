@@ -6,6 +6,10 @@ class PrinterStatus {
   final String message;
   final String? deviceAddress; // MAC address BLE, null untuk USB/tidak konek
   final String? deviceName;
+  /// Protokol yang akan dipakai otomatis saat print ("raw" atau
+  /// "compressed") -- hasil deteksi berdasarkan nama device, lihat
+  /// PERIPAGE_PROTOCOL.md (reverse-engineering, Juli 2026).
+  final String? detectedProtocol;
 
   PrinterStatus({
     required this.connected,
@@ -14,6 +18,7 @@ class PrinterStatus {
     required this.message,
     this.deviceAddress,
     this.deviceName,
+    this.detectedProtocol,
   });
 
   factory PrinterStatus.fromJson(Map<String, dynamic> json) {
@@ -24,6 +29,7 @@ class PrinterStatus {
       message: json['message'] ?? '',
       deviceAddress: json['device_address'] as String?,
       deviceName: json['device_name'] as String?,
+      detectedProtocol: json['detected_protocol'] as String?,
     );
   }
 
@@ -34,6 +40,7 @@ class PrinterStatus {
     String? message,
     String? deviceAddress,
     String? deviceName,
+    String? detectedProtocol,
   }) {
     return PrinterStatus(
       connected: connected ?? this.connected,
@@ -42,6 +49,7 @@ class PrinterStatus {
       message: message ?? this.message,
       deviceAddress: deviceAddress ?? this.deviceAddress,
       deviceName: deviceName ?? this.deviceName,
+      detectedProtocol: detectedProtocol ?? this.detectedProtocol,
     );
   }
 }
